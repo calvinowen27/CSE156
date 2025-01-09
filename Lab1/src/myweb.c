@@ -13,35 +13,47 @@
 #define DOUBLE_EMPTY_LINE_REGEX EMPTY_LINE_REGEX EMPTY_LINE_REGEX
 #define CLH_REGEX "(Content-Length): ([ -~]{1,128})" EMPTY_LINE_REGEX
 #define BUFFER_SIZE 8196
+#define OPTIONS "h"
 
-int main(void) {
+// initialize socket with ip address and port, and return the file descriptor for the socket
+// returns -1 on failure
+int *init_socket(const char *ip_addr, int port) {
 	// initialize socket fd
 	int sockfd = socket(PF_INET, SOCK_STREAM, 0);
+	if (sockfd < 0) {
+		fprintf(stderr, "init_socket(): failed to create socket\n");
+		return -1;
+	}
 
 	// init socket address struct with ip and port
 	struct sockaddr_in sockaddr;
 
-	sockaddr.sin_family = AF_INET;
-	sockaddr.sin_port = htons(80);
-	sockaddr.sin_addr.s_addr = inet_addr("93.184.216.34");
-
-	if (sockaddr.sin_addr.s_addr == INADDR_NONE) {
-		fprintf(stderr, "invalid ip address\n");
-
-		exit(1);
+	sockaddr.sin_family = AF_INET; // IPv4
+	sockaddr.sin_port = htons(port); // convert port endianness
+	if (inet_pton(AF_INET, ip_addr, &sockaddr.sin_addr.s_addr) < 0) {
+		fprintf(stderr, "init_socket(): invalid ip address provided\n");
+		return -1;
 	}
 
 	// connect socket
-	int res = connect(sockfd, (struct sockaddr*)&sockaddr, sizeof(sockaddr));
-
-	if (res < 0) {
-		fprintf(stderr, "connection failed\n");
-		exit(1);
+	if (connect(sockfd, (struct sockaddr*)&sockaddr, sizeof(sockaddr)) < 0) {
+		fprintf(stderr, "init_socket(): failed to connect socket\n");
+		return -1;
 	}
+
+	return sockfd;
+}
+
+int main(void) {
+	// parse command line args
+	char *ip_addr;
+	int port;
+	
+	int sockfd = init_socket(ip_addr, port);
 
 	char *req = "GET /index.html HTTP/1.1\r\nHost: www.example.com\r\n\r\n";
 
-	res = send(sockfd, req, strlen(req), 0);
+	int res = send(sockfd, req, strlen(req), 0);
 	// printf("%d bytes sent\n", res);
 
 	char buf[BUFFER_SIZE] = { 0 };
@@ -52,8 +64,6 @@ int main(void) {
 		fprintf(stderr, "initial read failed\n");
 		exit(1);
 	}
-
-	// fprintf(stderr, "%d bytes read\n", bytes_read);
 
 	// regex for matching content-length header field
 	regex_t regex_;
