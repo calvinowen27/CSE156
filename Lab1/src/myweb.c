@@ -13,15 +13,29 @@
 #define DOUBLE_EMPTY_LINE_REGEX EMPTY_LINE_REGEX EMPTY_LINE_REGEX
 #define CLH_REGEX "(Content-Length): ([ -~]{1,128})" EMPTY_LINE_REGEX
 #define BUFFER_SIZE 8196
-#define OPTIONS "h"
+
+// prints correct program usage to stderr
+void usage(char *exec) {
+    fprintf(stderr,
+        "SYNOPSIS\n"
+        "Makes a simple GET request and download for a file from a specified url and IPv4 address.\n"
+		"Outputs requested file contents to output.dat\n"
+        "\n"
+        "USAGE\n"
+        "   %s [url] [IPv4]:[optional receiving port]/[desired file name] [-h]\n"
+        "\n"
+        "OPTIONS\n"
+        "   -h               prints server response headers to stdout, and does not receive document\n",
+        exec);
+}
 
 // initialize socket with ip address and port, and return the file descriptor for the socket
 // returns -1 on failure
-int *init_socket(const char *ip_addr, int port) {
+int init_socket(const char *ip_addr, int port) {
 	// initialize socket fd
 	int sockfd = socket(PF_INET, SOCK_STREAM, 0);
 	if (sockfd < 0) {
-		fprintf(stderr, "init_socket(): failed to create socket\n");
+		fprintf(stderr, "init_socket(): failed to initialize socket\n");
 		return -1;
 	}
 
@@ -44,12 +58,23 @@ int *init_socket(const char *ip_addr, int port) {
 	return sockfd;
 }
 
-int main(void) {
+int main(int argc, char **argv) {
 	// parse command line args
+
+	for (int i = 1; i < argc; i++) {
+		printf("%s\n", argv[i]);
+	}
+
+	return 0;
+
 	char *ip_addr;
 	int port;
 	
 	int sockfd = init_socket(ip_addr, port);
+	if (sockfd < 0) {
+		fprintf(stderr, "main(): failed to initialize socket with IP %s:%d\n", ip_addr, port);
+		exit(1);
+	}
 
 	char *req = "GET /index.html HTTP/1.1\r\nHost: www.example.com\r\n\r\n";
 
