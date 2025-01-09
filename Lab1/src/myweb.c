@@ -42,27 +42,18 @@ int main(void) {
 	char *req = "GET /index.html HTTP/1.1\r\nHost: www.example.com\r\n\r\n";
 
 	res = send(sockfd, req, strlen(req), 0);
-	printf("%d bytes sent\n", res);
+	// printf("%d bytes sent\n", res);
 
 	char buf[BUFFER_SIZE] = { 0 };
-	int off = 0;
 
-	// int bytes_read = read(sockfd, buf, sizeof(buf) - 1); // initial read into buffer for parsing header fields
-
-	// int bytes_read = 0;
-
-	// while ((bytes_read = read(sockfd, buf + off, sizeof(buf) - off - 1)) > 0) {
-	// 	off += bytes_read;
-	// }
-
-	int bytes_read = read_until(sockfd, buf, DOUBLE_EMPTY_LINE_REGEX, 4, sizeof(buf));
+	int bytes_read = read_until(sockfd, buf, sizeof(buf), DOUBLE_EMPTY_LINE_REGEX);
 
 	if (bytes_read < 0) {
 		fprintf(stderr, "initial read failed\n");
 		exit(1);
 	}
 
-	fprintf(stderr, "%d bytes read\n", off);
+	// fprintf(stderr, "%d bytes read\n", bytes_read);
 
 	// regex for matching content-length header field
 	regex_t regex_;
@@ -78,6 +69,8 @@ int main(void) {
 
 	if (res != 0) {
 		fprintf(stderr, "regexec failed\n");
+		fprintf(stderr, "res == REG_NOMATCH: %s\n", res == REG_NOMATCH ? "true" : "false");
+		fprintf(stderr, "\nheader: %s\n", buf);
 		exit(1);
 	}
 
@@ -85,42 +78,9 @@ int main(void) {
 	memcpy(cl_str, buf + pmatch[2].rm_so, sizeof(cl_str));
 	int content_length = strtoll(cl_str, NULL, 10);
 
-	fprintf(stderr, "\n\nCONTENT LENGTH: %d\n\n", content_length);
+	// fprintf(stderr, "\n\nCONTENT LENGTH: %d\n\n", content_length);
 
-	// regex for finding start of content
-	res = regcomp(&regex_, DOUBLE_EMPTY_LINE_REGEX, 0);
-	if (res != 0) {
-		fprintf(stderr, "regcomp 2 failed\n");
-		exit(1);
-	}
-
-	res = regexec(&regex_, buf, 1, pmatch, 0);
-
-	if (res != 0) {
-		if (res == REG_NOMATCH) {
-			fprintf(stderr, "no match for start of content, something probably went wrong\n");
-			exit(1);
-		} else {
-			fprintf(stderr, "regexec 2 failed\n");
-			fprintf(stderr, "%d\n", res);
-			exit(1);
-		}
-	}
-	
-	// int content_bytes_read = bytes_read - pmatch[0].rm_eo;
-
-	// while (content_bytes_read < content_length && (res = read(sockfd, buf, sizeof(buf) - 1 > content_length - content_bytes_read ? content_length - content_bytes_read : sizeof(buf) - 1)) > 0) {
-	// 	printf("%s", buf);
-	// 	fprintf(stderr, "%d bytes read\n", res);
-	// 	content_bytes_read += res;
-	// }
-
-	printf("\n");
-
-	if (res < 0) {
-		fprintf(stderr, "response failed\n");
-		exit(1);
-	}
+	pass_n_bytes(sockfd, STDOUT_FILENO, content_length);
 
 	close(sockfd);
 
