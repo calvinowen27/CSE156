@@ -14,9 +14,6 @@
 #define EMPTY_LINE_REGEX "\r\n"
 #define DOUBLE_EMPTY_LINE_REGEX EMPTY_LINE_REGEX EMPTY_LINE_REGEX
 #define CLH_REGEX "(Content-Length): ([ -~]{1,128})" EMPTY_LINE_REGEX
-#define IP_REGEX "([[0-9]{1,3}.]{3}[0-9]{1,3})"
-#define PORT_REGEX "[[:]{0,1}([0-9]{1,5})]{0,1}"
-#define PATH_REGEX "(/[ -~]+)"
 #define DOC_ARG_REGEX IP_REGEX PORT_REGEX PATH_REGEX
 
 #define BUFFER_SIZE 8196
