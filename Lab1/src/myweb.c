@@ -7,6 +7,7 @@
 #include <arpa/inet.h>
 #include <string.h>
 #include <regex.h>
+#include <fcntl.h>
 #include "utils.h"
 #include "myweb.h"
 
@@ -40,31 +41,25 @@ int main(int argc, char **argv) {
 	char *url_arg = argv[1];
 	char *doc_arg = argv[2];
 
-	printf("url: %s\n", url_arg);
-	printf("doc arg: %s\n", doc_arg);
-	printf("header option?: %d\n", header_opt);
-
 	struct doc_data data;
 
 	parse_path(&data, doc_arg);
-
-	free(data.ip_addr);
-	free(data.doc_path);
-
-	return 0;
-
-	char *ip_addr;
-	int port;
 	
-	int sockfd = init_socket(ip_addr, port);
+	// initialize socket with user data
+	int sockfd = init_socket(data.ip_addr, data.port);
 	if (sockfd < 0) {
-		fprintf(stderr, "main(): failed to initialize socket with IP %s:%d\n", ip_addr, port);
+		fprintf(stderr, "main(): failed to initialize socket with IP %s:%d\n", data.ip_addr, data.port);
 		exit(1);
 	}
 
-	char *req = "GET /index.html HTTP/1.1\r\nHost: www.example.com\r\n\r\n";
+	// char *req = "GET /index.html HTTP/1.1\r\nHost: www.example.com\r\n\r\n";
+	char req[4 + strlen(data.doc_path) + 17 + strlen(url_arg) + 4];
+	sprintf(req, "GET %s HTTP/1.1\r\nHost: %s\r\n\r\n", data.doc_path, url_arg);
 
-	int res = send(sockfd, req, strlen(req), 0);
+	if (send(sockfd, req, strlen(req), 0) < 0) {
+		fprintf(stderr, "main(): failed to send request\n");
+		exit(1);
+	}
 	// printf("%d bytes sent\n", res);
 
 	char buf[BUFFER_SIZE] = { 0 };
@@ -72,38 +67,25 @@ int main(int argc, char **argv) {
 	int bytes_read = read_until(sockfd, buf, sizeof(buf), DOUBLE_EMPTY_LINE_REGEX);
 
 	if (bytes_read < 0) {
-		fprintf(stderr, "initial read failed\n");
+		fprintf(stderr, "main(): initial response read failed\n");
 		exit(1);
 	}
 
-	// regex for matching content-length header field
-	regex_t regex_;
-	res = regcomp(&regex_, CLH_REGEX, REG_EXTENDED);
-	if (res != 0) {
-		fprintf(stderr, "regcomp failed\n");
+	int content_length = get_content_length(buf);
+	if (content_length < 0) {
+		fprintf(stderr, "main(): get_content_length() failed\n");
 		exit(1);
 	}
 
-	regmatch_t pmatch[3];
+	int outfd = creat("output.dat", 0666);
 
-	res = regexec(&regex_, buf, 3, pmatch, 0);
-
-	if (res != 0) {
-		fprintf(stderr, "regexec failed\n");
-		fprintf(stderr, "res == REG_NOMATCH: %s\n", res == REG_NOMATCH ? "true" : "false");
-		fprintf(stderr, "\nheader: %s\n", buf);
-		exit(1);
-	}
-
-	char cl_str[pmatch[2].rm_eo - pmatch[2].rm_so];
-	memcpy(cl_str, buf + pmatch[2].rm_so, sizeof(cl_str));
-	int content_length = strtoll(cl_str, NULL, 10);
-
-	// fprintf(stderr, "\n\nCONTENT LENGTH: %d\n\n", content_length);
-
-	pass_n_bytes(sockfd, STDOUT_FILENO, content_length);
+	pass_n_bytes(sockfd, outfd, content_length);
 
 	close(sockfd);
+	close(outfd);
+
+	free(data.ip_addr);
+	free(data.doc_path);
 
 	return 0;
 }
@@ -137,51 +119,48 @@ int init_socket(const char *ip_addr, int port) {
 	return sockfd;
 }
 
+// parse header buffer and get value of Content-Length header field
+int get_content_length(char *buf) {
+	// regex for matching content-length header field
+	regex_t regex_;
+	if (regcomp(&regex_, CLH_REGEX, REG_EXTENDED) != 0) {
+		fprintf(stderr, "get_content_length(): regcomp failed for Content-Length header\n");
+		return -1;
+	}
+
+	regmatch_t pmatch[3];
+
+	if (regexec(&regex_, buf, 3, pmatch, 0) != 0) {
+		fprintf(stderr, "get_content_length(): regexec failed for Content-Length header\n");
+		return -1;
+	}
+
+	int cl_len = pmatch[2].rm_eo - pmatch[2].rm_so;
+	char cl_buf[cl_len + 1];
+	cl_buf[cl_len] = 0;
+	memcpy(cl_buf, buf + pmatch[2].rm_so, sizeof(cl_buf));
+	return atoi(cl_buf);
+}
+
 // parse document path/ip address field into doc_data struct for further use
 // returns 0 on success, -1 on error
 int parse_path(struct doc_data *data, const char *path) {
 	data->port = -1;
 
-	// regex for parsing path arg
 	regex_t regex_;
-	// int res = regcomp(&regex_, DOC_ARG_REGEX, REG_EXTENDED);
-	// if (res < 0) {
-	// 	fprintf(stderr, "parse_path(): regcomp() failed\n");
-	// 	return data;
-	// }
-
-	// regmatch_t pmatch[4];
-	// res = regexec(&regex_, path, 4, pmatch, 0);
-	// if (res < 0) {
-	// 	if (res != REG_NOMATCH) {
-	// 		fprintf(stderr, "parse_path(): regexec() failed\n");
-	// 		return data;
-	// 	}
-	// 	fprintf(stderr, "parse_path(): no regex match found for doc path arg. Invalid IP/Port/document path given.\n");
-	// 	return data;
-	// }
-
-	// data.ip_addr = calloc(pmatch[1].rm_eo - pmatch[1].rm_so, sizeof(char));
-	// memcpy(data.ip_addr, path + pmatch[1].rm_so, sizeof(data.ip_addr));
-
-	// char ip_buf[pmatch[2].rm_eo - pmatch[2].rm_so + 1];
-	// ip_buf[sizeof(ip_buf) - 1] = 0;
-	// memcpy(ip_buf, path + pmatch[2].rm_so, sizeof(ip_buf));
-
-	// data.port = atoi(ip_buf);
 
 	// regex for separating ip/port and doc path
 	int res = regcomp(&regex_, "/", 0);
 	if (res < 0) {
-		fprintf(stderr, "parse_path(): regcomp() failed\n");
+		fprintf(stderr, "parse_path(): regcomp() failed for '/'\n");
 		return -1;
 	}
 
 	regmatch_t pmatch[2];
 
 	res = regexec(&regex_, path, 1, &pmatch[1], 0);
-	if (res < 0 && res != REG_NOMATCH) {
-		fprintf(stderr, "parse_path(): regexec() failed\n");
+	if (res < 0) {
+		fprintf(stderr, "parse_path(): regexec() failed for '/', likely invalid IP and document path provided\n");
 		return -1;
 	}
 
@@ -191,17 +170,16 @@ int parse_path(struct doc_data *data, const char *path) {
 	data->doc_path[doc_path_len] = 0;
 	memcpy(data->doc_path, path + pmatch[1].rm_so, doc_path_len);
 	
-
 	// regex for separating ip and port
 	res = regcomp(&regex_, ":", 0);
 	if (res < 0) {
-		fprintf(stderr, "parse_path(): regcomp() failed\n");
+		fprintf(stderr, "parse_path(): regcomp() failed for ':'\n");
 		return -1;
 	}
 
 	res = regexec(&regex_, path, 1, &pmatch[0], 0);
 	if (res < 0 && res != REG_NOMATCH) {
-		fprintf(stderr, "parse_path(): regexec() failed\n");
+		fprintf(stderr, "parse_path(): regexec() failed for ':'\n");
 		return -1;
 	}
 
@@ -211,25 +189,20 @@ int parse_path(struct doc_data *data, const char *path) {
 	} else {
 		ip_addr_len = pmatch[0].rm_eo - 1;
 
+		// match on ':' so separate port from ip address and convert to int
 		int port_buf_len = pmatch[1].rm_so - pmatch[0].rm_eo;
-		char *port_buf = calloc(port_buf_len + 1, sizeof(char));
+		char port_buf[port_buf_len + 1];
 		memcpy(port_buf, path + pmatch[0].rm_eo, port_buf_len);
 		data->port = atoi(port_buf);
 		if (data->port <= 0) {
 			fprintf(stderr, "parse_path(): invalid port specified\n");
 			return -1;
 		}
-		free(port_buf);
 	}
 
-	// int ip_addr_len = pmatch[1].rm_eo - pmatch[1].rm_so;
 	data->ip_addr = calloc(ip_addr_len + 1, sizeof(char));
 	data->ip_addr[ip_addr_len] = 0;
 	memcpy(data->ip_addr, path, ip_addr_len);
-
-	printf("IP: %s\n", data->ip_addr);
-	printf("Port: %d\n", data->port);
-	printf("Doc path: %s\n", data->doc_path);
 
 	return 0;
 }
