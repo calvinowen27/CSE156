@@ -39,7 +39,6 @@ int main(int argc, char **argv) {
 	char *doc_arg = argv[2];
 
 	struct doc_data data;
-
 	parse_path(&data, doc_arg);
 	
 	// initialize socket with user data
@@ -49,8 +48,12 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 
-	char req[4 + strlen(data.doc_path) + 17 + strlen(url_arg) + 4];
+	int req_len = 4 + strlen(data.doc_path) + 17 + strlen(url_arg) + 4;
+	char req[req_len + 1];
+	req[req_len] = 0;
 	sprintf(req, "GET %s HTTP/1.1\r\nHost: %s\r\n\r\n", data.doc_path, url_arg);
+
+	printf("req: %s\n", req);
 
 	if (send(sockfd, req, strlen(req), 0) < 0) {
 		fprintf(stderr, "main(): failed to send request\n");
@@ -103,6 +106,7 @@ int init_socket(const char *ip_addr, int port) {
 
 	sockaddr.sin_family = AF_INET; // IPv4
 	sockaddr.sin_port = htons(port); // convert port endianness
+
 	if (inet_pton(AF_INET, ip_addr, &sockaddr.sin_addr.s_addr) < 0) {
 		fprintf(stderr, "init_socket(): invalid ip address provided\n");
 		return -1;
@@ -143,7 +147,7 @@ int get_content_length(char *buf) {
 // parse document path/ip address field into doc_data struct for further use
 // returns 0 on success, -1 on error
 int parse_path(struct doc_data *data, const char *path) {
-	data->port = -1;
+	data->port = 80;
 
 	regex_t regex_;
 
