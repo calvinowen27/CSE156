@@ -52,7 +52,6 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 
-	// char *req = "GET /index.html HTTP/1.1\r\nHost: www.example.com\r\n\r\n";
 	char req[4 + strlen(data.doc_path) + 17 + strlen(url_arg) + 4];
 	sprintf(req, "GET %s HTTP/1.1\r\nHost: %s\r\n\r\n", data.doc_path, url_arg);
 
@@ -60,9 +59,8 @@ int main(int argc, char **argv) {
 		fprintf(stderr, "main(): failed to send request\n");
 		exit(1);
 	}
-	// printf("%d bytes sent\n", res);
 
-	char buf[BUFFER_SIZE] = { 0 };
+	char buf[BUFFER_SIZE + 1] = { 0 };
 
 	int bytes_read = read_until(sockfd, buf, sizeof(buf), DOUBLE_EMPTY_LINE_REGEX);
 
@@ -77,12 +75,15 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 
-	int outfd = creat("output.dat", 0666);
-
-	pass_n_bytes(sockfd, outfd, content_length);
+	if (header_opt) {
+		printf("%s\n", buf);
+	} else {
+		int outfd = creat("output.dat", 0666);
+		pass_n_bytes(sockfd, outfd, content_length);
+		close(outfd);
+	}
 
 	close(sockfd);
-	close(outfd);
 
 	free(data.ip_addr);
 	free(data.doc_path);
