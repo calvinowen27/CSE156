@@ -51,14 +51,11 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 
+	// form request string
 	int req_len = 4 + strlen(data.doc_path) + 17 + strlen(url_arg) + 4;
 	char req[req_len + 1];
 	req[req_len] = 0;
 	sprintf(req, "GET %s HTTP/1.1\r\nHost: %s\r\n\r\n", data.doc_path, url_arg);
-
-	// char *req = "GET /index.html HTTP/1.1\r\nHost: www.example.com\r\n\r\n";
-
-	printf("req:\n%s\n", req);
 
 	if (send(sockfd, req, strlen(req), 0) < 0) {
 		fprintf(stderr, "main(): failed to send request\n");
@@ -75,10 +72,6 @@ int main(int argc, char **argv) {
 	}
 
 	int content_length = get_content_length(buf);
-	// if (content_length < 0) {
-	// 	fprintf(stderr, "main(): get_content_length() failed\n");
-	// 	exit(1);
-	// }
 
 	if (header_opt) {
 		printf("%s\n", buf);
