@@ -39,7 +39,10 @@ int main(int argc, char **argv) {
 	char *doc_arg = argv[2];
 
 	struct doc_data data;
-	parse_path(&data, doc_arg);
+	if (parse_path(&data, doc_arg) < 0) {
+		fprintf(stderr, "main(): failed to parse IP and document path: %s\n", doc_arg);
+		exit(1);
+	}
 	
 	// initialize socket with user data
 	int sockfd = init_socket(data.ip_addr, data.port);
@@ -53,7 +56,9 @@ int main(int argc, char **argv) {
 	req[req_len] = 0;
 	sprintf(req, "GET %s HTTP/1.1\r\nHost: %s\r\n\r\n", data.doc_path, url_arg);
 
-	printf("req: %s\n", req);
+	// char *req = "GET /index.html HTTP/1.1\r\nHost: www.example.com\r\n\r\n";
+
+	printf("req:\n%s\n", req);
 
 	if (send(sockfd, req, strlen(req), 0) < 0) {
 		fprintf(stderr, "main(): failed to send request\n");
@@ -70,16 +75,20 @@ int main(int argc, char **argv) {
 	}
 
 	int content_length = get_content_length(buf);
-	if (content_length < 0) {
-		fprintf(stderr, "main(): get_content_length() failed\n");
-		exit(1);
-	}
+	// if (content_length < 0) {
+	// 	fprintf(stderr, "main(): get_content_length() failed\n");
+	// 	exit(1);
+	// }
 
 	if (header_opt) {
 		printf("%s\n", buf);
 	} else {
 		int outfd = creat("output.dat", 0666);
-		pass_n_bytes(sockfd, outfd, content_length);
+		if (content_length > 0) {
+			pass_n_bytes(sockfd, outfd, content_length);
+		} else {
+			pass_file(sockfd, outfd);
+		}
 		close(outfd);
 	}
 
@@ -111,6 +120,8 @@ int init_socket(const char *ip_addr, int port) {
 		fprintf(stderr, "init_socket(): invalid ip address provided\n");
 		return -1;
 	}
+
+	// printf("\n\nIP: %d\n\n", sockaddr.sin_addr.s_addr);
 
 	// connect socket
 	if (connect(sockfd, (struct sockaddr*)&sockaddr, sizeof(sockaddr)) < 0) {
@@ -161,7 +172,7 @@ int parse_path(struct doc_data *data, const char *path) {
 	regmatch_t pmatch[2];
 
 	res = regexec(&regex_, path, 1, &pmatch[1], 0);
-	if (res < 0) {
+	if (res != 0) {
 		fprintf(stderr, "parse_path(): regexec() failed for '/', likely invalid IP and document path provided\n");
 		return -1;
 	}

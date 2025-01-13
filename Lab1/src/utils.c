@@ -22,11 +22,6 @@ int read_n_bytes(int sockfd, char *buf, int n) {
 		return -1;
 	}
 
-	if (offset != n) {
-		fprintf(stderr, "read_n_bytes(): bytes read does not equal n\n");
-		return -1;
-	}
-
 	return offset;
 }
 
@@ -114,6 +109,27 @@ int pass_n_bytes(int infd, int outfd, int n) {
 	if (total_bytes_read != n) {
 		fprintf(stderr, "pass_n_bytes(): bytes read does not equal n\n");
 		return -1;
+	}
+
+	return 0;
+}
+
+// continually read bytes from infd and write them to outfd, until EOF is reached
+// return 0 on success, -1 for error
+int pass_file(int infd, int outfd) {
+	char buf[BUFFER_SIZE];
+	
+	int bytes_read = 0;
+	while ((bytes_read = read_n_bytes(infd, buf, sizeof(buf))) != EOF) {
+		if (bytes_read < 0) {
+			fprintf(stderr, "pass_n_bytes(): read_n_bytes() failed\n");
+			return -1;
+		}
+
+		if (write_n_bytes(outfd, buf, bytes_read) < 0) {
+			fprintf(stderr, "pass_n_bytes(): write_n_bytes() failed\n");
+			return -1;
+		}
 	}
 
 	return 0;

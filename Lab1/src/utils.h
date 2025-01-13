@@ -13,3 +13,7 @@ int read_until(int sockfd, char *buf, int buf_len, const char *match);
 // continually read bytes from infd and write them to outfd, until n bytes have been passed
 // return 0 on success, -1 for error
 int pass_n_bytes(int infd, int outfd, int n);
+
+// continually read bytes from infd and write them to outfd, until EOF is reached
+// return 0 on success, -1 for error
+int pass_file(int infd, int outfd);
