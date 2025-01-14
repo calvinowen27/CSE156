@@ -6,10 +6,14 @@ Calvin Owen
 
 ## Files
 ### src/
-myweb.c - C file implementing the main functionality of the web downloader
-myweb.h - Header file defining prototype functions for myweb.c
-utils.c - C file implementing utility read/write functions to be used in myweb.c
-utils.h - Header file defining prototype functions for utils.h
+<ins>myweb.c</ins> - C file implementing the main functionality of the web downloader
+
+<ins>myweb.h</ins> - Header file defining prototype functions for myweb.c
+
+<ins>utils.c</ins> - C file implementing utility read/write functions to be used in myweb.c
+
+<ins>utils.h</ins> - Header file defining prototype functions for utils.h
+
 
 ### test/
 <ins>run_tests.sh</ins> - run all test in the folder
