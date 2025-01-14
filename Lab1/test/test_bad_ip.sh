@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 
-make clean
-make
+echo "
+!!! RUNNING TEST_BAD_IP !!!
+"
 
 if [ -f output.dat ]; then
 	rm output.dat

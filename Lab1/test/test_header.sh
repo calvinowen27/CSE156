@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 
-make clean
-make
+echo "
+!!! RUNNING TEST_HEADER !!!
+"
 
 ./bin/myweb www.example.com 93.184.216.24:80/index.html -h > head1
 curl 93.184.216.24:80/index.html -D head2 -H "Host: www.example.com" -o out

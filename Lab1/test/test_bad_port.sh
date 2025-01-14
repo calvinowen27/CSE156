@@ -1,14 +1,10 @@
 #!/usr/bin/env bash
 
-make clean
-make
-
-if [ -f output.dat ]; then
-	rm output.dat
-fi
+echo "
+!!! RUNNING TEST_BAD_PORT !!!
+"
 
 ./bin/myweb www.example.com 93.184.216.34:-123/
-
 
 if [ -f output.dat ]; then
 	echo "~~~~~~~~~~~~~~~~~~~~~~~

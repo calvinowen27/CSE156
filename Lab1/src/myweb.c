@@ -58,6 +58,8 @@ int main(int argc, char **argv) {
 	req[req_len] = 0;
 	sprintf(req, "GET %s HTTP/1.1\r\nHost: %s\r\n\r\n", data.doc_path, url_arg);
 
+	// printf("req:\n%s\n", req);
+
 	if (send(sockfd, req, strlen(req), 0) < 0) {
 		fprintf(stderr, "main(): failed to send request\n");
 		exit(1);
