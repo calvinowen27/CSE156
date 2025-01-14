@@ -120,7 +120,7 @@ int pass_file(int infd, int outfd) {
 	char buf[BUFFER_SIZE];
 	
 	int bytes_read = 0;
-	while ((bytes_read = read_n_bytes(infd, buf, sizeof(buf))) != EOF) {
+	while ((bytes_read = read_n_bytes(infd, buf, sizeof(buf))) > 0) {
 		if (bytes_read < 0) {
 			fprintf(stderr, "pass_n_bytes(): read_n_bytes() failed\n");
 			return -1;

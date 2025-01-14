@@ -14,6 +14,7 @@
 #define EMPTY_LINE_REGEX "\r\n"
 #define DOUBLE_EMPTY_LINE_REGEX EMPTY_LINE_REGEX EMPTY_LINE_REGEX
 #define CLH_REGEX "(Content-Length): ([ -~]{1,128})" EMPTY_LINE_REGEX
+#define TEH_REGEX "(Transfer-Encoding): ([ -~]{1,128})" EMPTY_LINE_REGEX
 #define DOC_ARG_REGEX IP_REGEX PORT_REGEX PATH_REGEX
 
 #define BUFFER_SIZE 8196
@@ -71,10 +72,19 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 
+	int res = has_chunked_transfer_encoding(buf);
+	if (res) {
+		fprintf(stderr, "'Transfer-Encoding: chunked' header field is not supported for this lab.\n");
+		exit(1);
+	} else if (res < 0) {
+		fprintf(stderr, "main(): encountered error while checking for Transfer-Encoding header field.\n");
+		exit(1);
+	}
+
 	int content_length = get_content_length(buf);
 
 	if (header_opt) {
-		printf("%s\n", buf);
+		printf("%s", buf);
 	} else {
 		int outfd = creat("output.dat", 0666);
 		if (content_length > 0) {
@@ -125,6 +135,7 @@ int init_socket(const char *ip_addr, int port) {
 }
 
 // parse header buffer and get value of Content-Length header field
+// return content length on success, -1 on error
 int get_content_length(char *buf) {
 	// regex for matching content-length header field
 	regex_t regex_;
@@ -135,8 +146,11 @@ int get_content_length(char *buf) {
 
 	regmatch_t pmatch[3];
 
-	if (regexec(&regex_, buf, 3, pmatch, 0) != 0) {
-		fprintf(stderr, "get_content_length(): regexec failed for Content-Length header\n");
+	int res = regexec(&regex_, buf, 3, pmatch, 0);
+	if (res != 0) {
+		if (res != REG_NOMATCH) {
+			fprintf(stderr, "get_content_length(): regexec failed for Content-Length header\n");
+		}
 		return -1;
 	}
 
@@ -145,6 +159,37 @@ int get_content_length(char *buf) {
 	cl_buf[cl_len] = 0;
 	memcpy(cl_buf, buf + pmatch[2].rm_so, sizeof(cl_buf));
 	return atoi(cl_buf);
+}
+
+// return 1 if buf has header field/value "Transfer-Encoding: chunked"
+// return 0 if not
+// return -1 on error
+int has_chunked_transfer_encoding(char *buf) {
+	// regex for matching Transfer-Encoding header field
+	regex_t regex_;
+	if (regcomp(&regex_, TEH_REGEX, REG_EXTENDED) != 0) {
+		fprintf(stderr, "has_chunked_transfer_encoding(): regcomp failed for Transfer-Encoding header\n");
+		return -1;
+	}
+
+	regmatch_t pmatch[3];
+
+	int res = regexec(&regex_, buf, 3, pmatch, 0);
+	if (res != 0) {
+		if (res != REG_NOMATCH) {
+			fprintf(stderr, "has_chunked_transfer_encoding(): regexec failed for Transfer-Encoding header\n");
+			return -1;
+		}
+		return 0;
+	}
+
+	int val_len = pmatch[2].rm_eo - pmatch[2].rm_so;
+	char *val_buf = calloc(val_len + 1, sizeof(char));
+	val_buf[val_len] = 0;
+	memcpy(val_buf, buf + pmatch[2].rm_so, val_len);
+	res = !strcmp("chunked", val_buf);
+	free(val_buf);
+	return res;
 }
 
 // parse document path/ip address field into doc_data struct for further use
