@@ -1,0 +1,46 @@
+Description:
+-------------
+The myweb program developed for Lab1: Simple Web Downloader downloads the specified file from the given url and ip using
+an HTTP request, and saves the contents to the file output.dat in the same directory. Alternatively, the -h flag can be 
+used to omit the downloading of the requested file, and instead print the header of the HTTP response to stdout.
+
+
+Usage:
+-------
+First, make sure to build the myweb executable using the `make` command. This will build the myweb executable to the 
+bin/ directory.
+In the same directory as the myweb executable, you ran run the application with the following command:
+
+`./myweb [url] [Server IPv4 address]:[optional port]/[file path to request] [-h (optional)]
+
+The default port used is 80, and the connection will likely time out for any other port.
+Here is an example command with all of the argument filled in:
+
+`./myweb www.example.com 93.184.216.24:80/index.html`
+
+
+Implementation:
+----------------
+The internal implementation of the myweb app functions as follows:
+- Parse command line arguments
+- Open socket and establish connection to server using the IP address and Port using the TCP protocol
+- Create and HTTP Request using the specified arguments, and send it to the server
+- Listen for the server HTTP response
+- Parse response, looking for Content-Length and Transfer-Encoding header fields
+- Write content of server response to output.dat file, unless -h flag given in command
+	- If -h flag was given, write the header of the response to stdout
+- Close the connection
+- Close all files that were opened
+- Free all memory
+
+
+
+Test Cases:
+------------
+
+
+
+Shortcomings:
+--------------
+
+
