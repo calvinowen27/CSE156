@@ -108,7 +108,6 @@ int init_socket(const char *ip_addr, int port) {
 
 	sockaddr.sin_family = AF_INET; // IPv4
 	sockaddr.sin_port = htons(port); // convert port endianness
-
 	if (inet_pton(AF_INET, ip_addr, &sockaddr.sin_addr.s_addr) < 0) {
 		fprintf(stderr, "init_socket(): invalid ip address provided\n");
 		return -1;
@@ -200,8 +199,8 @@ int parse_path(struct doc_data *data, const char *path) {
 		char port_buf[port_buf_len + 1];
 		memcpy(port_buf, path + pmatch[0].rm_eo, port_buf_len);
 		data->port = atoi(port_buf);
-		if (data->port <= 0) {
-			fprintf(stderr, "parse_path(): invalid port specified\n");
+		if (data->port <= 0 || data->port > 65535) {
+			fprintf(stderr, "parse_path(): invalid port specified. Port must be integer between 0 and 65535.\n");
 			return -1;
 		}
 	}
