@@ -53,4 +53,10 @@ test_header.sh	 - 	test the -h flag for the myweb, which should output the respo
 
 Shortcomings:
 --------------
-
+There are several shortcomings to this implementation of the simple web downloader app. The first and most obvious being 
+that it does not support chunked transfer encoding, so if the content of a webpage doesn't fit within a single packet, 
+it cannot be downloaded. The app also requires the user know the ip of the server that the webpage is hosted, which is 
+inconvenient to say the least. It also only offers two modes of use: a regular download and a header examination tool,
+which is not very useful for most users. Additionally, if a response is received that has no Content-Length header field 
+and no Transfer-Encoding header field, the app will continue waiting for data from the server until the server closes 
+the connection.
