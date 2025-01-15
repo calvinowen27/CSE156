@@ -88,11 +88,13 @@ int main(int argc, char **argv) {
 		printf("%s", buf);
 	} else {
 		int outfd = creat("output.dat", 0666);
+		
 		if (content_length > 0) {
 			pass_n_bytes(sockfd, outfd, content_length);
 		} else {
 			pass_file(sockfd, outfd);
 		}
+
 		close(outfd);
 	}
 

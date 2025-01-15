@@ -1,3 +1,5 @@
+#include "stdio.h"
+
 // read into buf from sockfd. reads n bytes or the size of buf, whichever is smaller
 // return bytes read on success, -1 for error
 int read_n_bytes(int sockfd, char *buf, int n);
