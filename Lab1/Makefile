@@ -7,10 +7,10 @@ CFLAGS   = -Wall -Werror -Wextra -Wpedantic -Wstrict-prototypes
 all: $(EXECBIN)
 
 $(EXECBIN): $(OBJECTS)
-	clang -o bin/$@ $^
+	gcc -o bin/$@ $^
 
 src/%.o : %.c
-	clang $(CFLAGS) -c $<
+	gcc $(CFLAGS) -c $<
 
 clean:
 	rm -f bin/$(EXECBIN) $(OBJECTS)
