@@ -18,9 +18,9 @@ Calvin Owen
 ### test/
 <ins>run_tests.sh</ins> - run all test in the folder
 
-<ins>test_bad_ip.sh</ins> - test myweb app with an invalid ip address
+<ins>test_bad_ip.sh</ins> - test myweb app with an invalid ip address and invalid ports
 
-<ins>test_bad_port.sh</ins> - test myweb app with an invalid port specified
+<ins>test_403.sh</ins> - test myweb app with a request to a forbidden resource, to make sure output is consistent
 
 <ins>test_chunked.sh</ins> - test whether or not 'Transfer-Encoding: chunked' header field is supported
 

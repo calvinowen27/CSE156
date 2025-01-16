@@ -42,8 +42,8 @@ Test Cases:
 ------------
 I wrote 5 test scripts that test each element of the functionality of the application.
 
-test_bad_ip.sh	 - 	test myweb app with an invalid ip address
-test_bad_port.sh - 	test myweb app with an invalid port specified
+test_bad_ip.sh	 - 	test myweb app with an invalid ip address and invalid ports
+test_403.sh		 -  test myweb app with a request to a forbidden resource, to make sure output is consistent
 test_chunked.sh  - 	test whether or not 'Transfer-Encoding: chunked' header field is supported
 test_example.sh  - 	test reasonable commands for multiple websites to make sure outputs match 
 					with expected result from equivalent curl command
