@@ -11,26 +11,45 @@
 #include "myserver.h"
 #include "utils.h"
 
-int main(void) {
-	struct sockaddr_in serveraddr, clientaddr;
-	socklen_t clientaddr_size = sizeof(clientaddr);
+#define IP_ADDR "127.0.0.1"
+#define BUFFER_SIZE 4096
 
-	int sockfd = init_socket("127.0.0.1", 1234, &serveraddr);
-	if (sockfd < 0) {
-		logerr("main(): server init_socket() failed");
+int main(int argc, char **argv) {
+	// handle command line args
+	if (argc != 2) {
+		printf("Invalid number of options provided.\nThis is where I will print the usage of the program.\n");
 		exit(1);
 	}
 
-	char buf[4096];
-
-	if (recvfrom(sockfd, buf, sizeof(buf) - 1, 0, (struct sockaddr *)&clientaddr, &clientaddr_size) < 0) {
-		logerr("main(): server failed to receive from socket");
+	int port = atoi(argv[1]);
+	if (port < 0 || port > 65535) {
+		printf("Invalid port provided. Please provide a port between 0-65535.\n");
+		exit(1);
 	}
 
-	buf[4095] = 0;
-	printf("%s\n", buf);
+	struct sockaddr_in serveraddr, clientaddr;
+	socklen_t clientaddr_size = sizeof(clientaddr);
 
-	printf("server done\n");
+	int sockfd = init_socket(IP_ADDR, port, &serveraddr);
+	if (sockfd < 0) {
+		fprintf(stderr, "myserver ~ main(): server init_socket() failed.\n");
+		exit(1);
+	}
+
+	char buf[BUFFER_SIZE + 1];
+	buf[BUFFER_SIZE] = 0;
+
+	while (recvfrom(sockfd, buf, BUFFER_SIZE, 0, (struct sockaddr *)&clientaddr, &clientaddr_size) > 0) {
+		printf("%s\n", buf);
+
+		if (sendto(sockfd, buf, BUFFER_SIZE, 0, (struct sockaddr *)&clientaddr, clientaddr_size) < 0) {
+			fprintf(stderr, "myserver ~ main(): server failed to send packets back to client.\n");
+		}
+	}
+
+	fprintf(stderr,"myserver ~ main(): server failed to receive from socket.\n");
+
+	printf("myserver ~ done\n");
 
 	close(sockfd);
 

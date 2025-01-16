@@ -19,4 +19,4 @@ src/%.o : %.c
 	gcc $(CFLAGS) -c $<
 
 clean:
-	rm -f bin/$(EXECBIN) $(OBJECTS)
+	rm -f bin/$(CLIENT_BIN) bin/$(SERVER_BIN) $(CLIENT_OBJS) $(SERVER_OBJS)
