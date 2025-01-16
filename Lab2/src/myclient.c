@@ -79,18 +79,43 @@ int init_socket(struct sockaddr_in *sockaddr, const char *ip_addr, int port) {
 	return sockfd;
 }
 
+// split uint32_t into uint8_t[4]
+uint8_t *split_bytes(uint32_t val) {
+	uint8_t res[4];
+
+	res[0] = val & 0xff000000;
+	res[1] = val & 0x00ff0000;
+	res[2] = val & 0x0000ff00;
+	res[3] = val & 0x000000ff;
+
+	return res;
+}
+
 // send file from fd to sockfd, also using sockaddr
 // return 0 on success, -1 on error
 int send_file(int fd, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_size, int mtu) {
 	char buf[mtu];
 
+	uint32_t packet_num = 0;
+
 	int bytes_read;
-	while ((bytes_read = read(fd, buf, sizeof(buf))) > 0) {
+	do {
+		bytes_read = read(fd, buf + 4, sizeof(buf));
+
+		// assign packet id to first 4 bytes of packet
+		uint8_t *pn_bytes = split_bytes(packet_num);
+		buf[0] = pn_bytes[0];
+		buf[1] = pn_bytes[1];
+		buf[2] = pn_bytes[2];
+		buf[3] = pn_bytes[3];
+
 		if (sendto(sockfd, buf, bytes_read, 0, sockaddr, sockaddr_size) < 0) {
 			fprintf(stderr, "myclient ~ send_file(): client failed to send packetto server.\n");
 			return -1;
 		}
-	}
+
+		packet_num += 1;
+	} while (bytes_read > 0);
 
 	return 0;
 }
