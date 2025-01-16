@@ -1,12 +1,16 @@
-EXECBIN = myclient myserver
-SOURCES = src/myclient.c src/myserver.c src/utils.c
+CLIENT_BIN = myclient
+CLIENT_OBJS = src/myclient.o src/utils.o
+SERVER_BIN = myserver
+SERVER_OBJS = src/myserver.o src/utils.o
+
 OBJECTS = src/myclient.o src/myserver.o src/utils.o
 
 CFLAGS   = -Wall -Werror -Wextra -Wpedantic -Wstrict-prototypes
 
 all: $(EXECBIN)
 
-client: myclient
+client: 
+CLIENT_BIN: 
 server: myserver
 
 $(EXECBIN): $(OBJECTS)

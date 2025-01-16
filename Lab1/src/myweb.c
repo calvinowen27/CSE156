@@ -51,11 +51,17 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 
+	char *url = parse_url(url_arg);
+	if (url == NULL) {
+		fprintf(stderr, "main(): failed to parse url argument\n");
+		exit(1);
+	}
+
 	// form request string
-	int req_len = 4 + strlen(data.doc_path) + 17 + strlen(url_arg) + 4;
+	int req_len = 4 + strlen(data.doc_path) + 17 + strlen(url) + 4;
 	char req[req_len + 1];
 	req[req_len] = 0;
-	sprintf(req, "GET %s HTTP/1.1\r\nHost: %s\r\n\r\n", data.doc_path, url_arg);
+	sprintf(req, "GET %s HTTP/1.1\r\nHost: %s\r\n\r\n", data.doc_path, url);
 
 	// printf("req:\n%s\n", req);
 
@@ -135,6 +141,49 @@ int init_socket(const char *ip_addr, int port) {
 	}
 
 	return sockfd;
+}
+
+char *parse_url(char *url_arg) {
+	char *url;
+
+	// regex for matching // in url
+	regex_t regex_;
+	if (regcomp(&regex_, "//", REG_EXTENDED) != 0) {
+		fprintf(stderr, "parse_url(): regcomp failed for '//' header\n");
+		return NULL;
+	}
+
+	regmatch_t pmatch;
+
+	int res = regexec(&regex_, url_arg, 1, &pmatch, 0);
+	if (res != 0 && res != REG_NOMATCH) {
+		fprintf(stderr, "parse_url(): regexec failed for '//' header\n");
+		return NULL;
+	}
+
+	if (res == REG_NOMATCH) {
+		url = url_arg;
+	} else {
+		url = url_arg + pmatch.rm_eo;
+	}
+
+	// regex for matching / in url
+	if (regcomp(&regex_, "/", REG_EXTENDED) != 0) {
+		fprintf(stderr, "parse_url(): regcomp failed for '/' header\n");
+		return NULL;
+	}
+
+	res = regexec(&regex_, url, 1, &pmatch, 0);
+	if (res != 0 && res != REG_NOMATCH) {
+		fprintf(stderr, "parse_url(): regexec failed for '/' header\n");
+		return NULL;
+	}
+
+	if (res != REG_NOMATCH) {
+		url[pmatch.rm_so] = 0;
+	}
+
+	return url;
 }
 
 // parse header buffer and get value of Content-Length header field

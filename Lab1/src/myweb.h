@@ -8,6 +8,8 @@ void usage(char *exec);
 // returns -1 on failure
 int init_socket(const char *ip_addr, int port);
 
+char *parse_url(char *url_arg);
+
 // parse header buffer and get value of Content-Length header field
 // return content length on success, -1 on error
 int get_content_length(char *buf);
