@@ -15,9 +15,9 @@ int main(void) {
 	struct sockaddr_in serveraddr, clientaddr;
 	socklen_t clientaddr_size = sizeof(clientaddr);
 
-	int sockfd = init_socket("127.0.0.1", 99, &serveraddr);
+	int sockfd = init_socket("127.0.0.1", 1234, &serveraddr);
 	if (sockfd < 0) {
-		logerr("main(): serverinit_socket() failed");
+		logerr("main(): server init_socket() failed");
 		exit(1);
 	}
 
@@ -56,7 +56,8 @@ int init_socket(const char *ip_addr, int port, struct sockaddr_in *sockaddr) {
 
 	// bind socket
 	if (bind(sockfd, (struct sockaddr *)sockaddr, sizeof(*sockaddr)) < 0) {
-		fprintf(stderr, "init_socket(): failed to connect socket\n");
+		fprintf(stderr, "init_socket(): failed to bind socket\n");
+		fprintf(stderr, "%s\n", strerror(errno));
 		return -1;
 	}
 

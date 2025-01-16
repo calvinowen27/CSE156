@@ -18,7 +18,7 @@ int main(void) {
 	}
 
 	serveraddr.sin_family = AF_INET;
-	serveraddr.sin_port = htons(99);
+	serveraddr.sin_port = htons(1234);
 	serveraddr.sin_addr.s_addr = inet_addr("127.0.0.1");
 
 	if (sendto(sockfd, "1hello1", 8, 0, (struct sockaddr *)&serveraddr, serveraddr_size) < 0) {

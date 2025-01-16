@@ -5,15 +5,14 @@ SERVER_OBJS = src/myserver.o src/utils.o
 
 OBJECTS = src/myclient.o src/myserver.o src/utils.o
 
-CFLAGS   = -Wall -Werror -Wextra -Wpedantic -Wstrict-prototypes
+CFLAGS = -Wall -Werror -Wextra -Wpedantic -Wstrict-prototypes
 
-all: $(EXECBIN)
+all: $(CLIENT_BIN) $(SERVER_BIN)
 
-client: 
-CLIENT_BIN: 
-server: myserver
+$(CLIENT_BIN): $(CLIENT_OBJS)
+	gcc -o bin/$@ $^
 
-$(EXECBIN): $(OBJECTS)
+$(SERVER_BIN): $(SERVER_OBJS)
 	gcc -o bin/$@ $^
 
 src/%.o : %.c
