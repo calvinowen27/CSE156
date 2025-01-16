@@ -40,16 +40,9 @@ int main(int argc, char **argv) {
 	char buf[BUFFER_SIZE + 1];
 	buf[BUFFER_SIZE] = 0;
 
-	while (recvfrom(sockfd, buf, BUFFER_SIZE, 0, (struct sockaddr *)&clientaddr, &clientaddr_size) > 0) {
-		printf("%d %d %d %d\n", buf[0], buf[1], buf[2], buf[3]);
-		printf("%s\n\n", buf+4);
-
-		if (sendto(sockfd, buf, BUFFER_SIZE, 0, (struct sockaddr *)&clientaddr, clientaddr_size) < 0) {
-			fprintf(stderr, "myserver ~ main(): server failed to send packets back to client.\n");
-		}
+	if (echo_data(sockfd, (struct sockaddr *)&clientaddr, &clientaddr_size) < 0) {
+		fprintf(stderr,"myserver ~ main(): server failed to receive from socket.\n");
 	}
-
-	fprintf(stderr,"myserver ~ main(): server failed to receive from socket.\n");
 
 	printf("myserver ~ done\n");
 
@@ -83,4 +76,25 @@ int init_socket(struct sockaddr_in *sockaddr, const char *ip_addr, int port) {
 	}
 
 	return sockfd;
+}
+
+// receive data from sockfd and echo it back as it arrives back to the client
+// this function will run forver once called, or until there is an error (returns -1)
+int echo_data(int sockfd, struct sockaddr *sockaddr, socklen_t *sock_size) {
+	char buf[BUFFER_SIZE];
+	memset(buf, 0, sizeof(buf));
+
+	while (recvfrom(sockfd, buf, BUFFER_SIZE, 0, sockaddr, sock_size) >= 0) {
+		printf("%d %d %d %d\n", buf[0], buf[1], buf[2], buf[3]);
+		printf("%s\n\n", buf+4);
+
+		if (sendto(sockfd, buf, BUFFER_SIZE, 0, sockaddr, *sock_size) < 0) {
+			fprintf(stderr, "myserver ~ main(): server failed to send packets back to client.\n");
+			break;
+		}
+
+		memset(buf, 0, sizeof(buf));
+	}
+
+	return -1;
 }

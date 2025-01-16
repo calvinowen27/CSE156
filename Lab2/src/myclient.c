@@ -6,8 +6,11 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <sys/select.h>
 #include "myclient.h"
 #include "utils.h"
+
+#define BUFFER_SIZE 4096
 
 int main(int argc, char **argv) {
 	// handle command line args
@@ -53,7 +56,13 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 
-	// receive file echo from server
+	// char buf[BUFFER_SIZE];
+	// buf[BUFFER_SIZE - 1] = 0;
+
+	// // receive file echo from server
+	// while (recvfrom(sockfd, buf, sizeof(buf) - 1, 0, (struct sockaddr *)&serveraddr, &serveraddr_size) > 0) {
+	// 	printf("%s\n", buf + 4);
+	// }
 
 	printf("client done\n");
 
@@ -95,13 +104,18 @@ uint8_t *split_bytes(uint32_t val) {
 // return 0 on success, -1 on error
 int send_file(int fd, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_size, int mtu) {
 	char buf[mtu];
+	memset(buf, 0, sizeof(buf));
 
 	uint32_t packet_num = 0;
 
-	int bytes_read;
-	do {
-		bytes_read = read(fd, buf + 4, sizeof(buf) - 4);
+	fd_set fds;
+	FD_SET(sockfd, &fds);
 
+	struct timeval timeout;
+	timeout.tv_sec = 10;
+
+	int bytes_read;
+	while ((bytes_read = read(fd, buf + 4, sizeof(buf) - 4)) > 0) {
 		// assign packet id to first 4 bytes of packet
 		uint8_t *pn_bytes = split_bytes(packet_num);
 		buf[0] = pn_bytes[0]+1;
@@ -109,13 +123,27 @@ int send_file(int fd, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_
 		buf[2] = pn_bytes[2]+1;
 		buf[3] = pn_bytes[3]+1;
 
+		// printf("%d %d %d %d\n", buf[0], buf[1], buf[2], buf[3]);
+		// printf("%s\n", buf);
+
 		if (sendto(sockfd, buf, bytes_read + 4, 0, sockaddr, sockaddr_size) < 0) {
 			fprintf(stderr, "myclient ~ send_file(): client failed to send packetto server.\n");
 			return -1;
 		}
 
+		printf("sent: %d\n", buf[3]);
+
+		if (select(sockfd + 1, &fds, NULL, NULL, &timeout)) {
+			if (recvfrom(sockfd, buf, sizeof(buf), 0, sockaddr, &sockaddr_size) > 0) {
+				printf("receive: %d %d %d %d\n", buf[0], buf[1], buf[2], buf[3]);
+				printf("%s\n", buf);
+			}
+		}
+
 		packet_num += 1;
-	} while (bytes_read > 0);
+
+		memset(buf, 0, sizeof(buf));
+	}
 
 	return 0;
 }
