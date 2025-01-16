@@ -41,7 +41,8 @@ int main(int argc, char **argv) {
 	buf[BUFFER_SIZE] = 0;
 
 	while (recvfrom(sockfd, buf, BUFFER_SIZE, 0, (struct sockaddr *)&clientaddr, &clientaddr_size) > 0) {
-		printf("%s\n", buf);
+		printf("%d %d %d %d\n", buf[0], buf[1], buf[2], buf[3]);
+		printf("%s\n\n", buf+4);
 
 		if (sendto(sockfd, buf, BUFFER_SIZE, 0, (struct sockaddr *)&clientaddr, clientaddr_size) < 0) {
 			fprintf(stderr, "myserver ~ main(): server failed to send packets back to client.\n");
