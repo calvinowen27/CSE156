@@ -31,7 +31,7 @@ int main(int argc, char **argv) {
 	struct sockaddr_in serveraddr, clientaddr;
 	socklen_t clientaddr_size = sizeof(clientaddr);
 
-	int sockfd = init_socket(IP_ADDR, port, &serveraddr);
+	int sockfd = init_socket(&serveraddr, IP_ADDR, port);
 	if (sockfd < 0) {
 		fprintf(stderr, "myserver ~ main(): server init_socket() failed.\n");
 		exit(1);

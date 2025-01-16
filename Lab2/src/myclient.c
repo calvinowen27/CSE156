@@ -31,6 +31,7 @@ int main(int argc, char **argv) {
 
 	char *infile_path = argv[4];															// infile path
 	char *outfile_path = argv[5];															// outfile path
+	(void)outfile_path;
 	
 	int infd = open(infile_path, 0600);
 	if (infd < 0) {
