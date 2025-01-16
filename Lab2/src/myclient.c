@@ -46,6 +46,7 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 
+
 	if (sendto(sockfd, "1hello1", 8, 0, (struct sockaddr *)&serveraddr, serveraddr_size) < 0) {
 		fprintf(stderr, "myclient ~ main(): client failed to send message to server.\n");
 	}
@@ -67,7 +68,7 @@ int main(int argc, char **argv) {
 	return 0;
 }
 
-int init_socket(struct sockaddr_in *sockaddr, char *ip_addr, int port) {
+int init_socket(struct sockaddr_in *sockaddr, const char *ip_addr, int port) {
 	int sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 	if (sockfd < 0) {
 		fprintf(stderr, "myclient ~ init_socket(): client failed to initialize socket.\n");

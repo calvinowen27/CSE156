@@ -27,6 +27,7 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 
+	// initialize server socket
 	struct sockaddr_in serveraddr, clientaddr;
 	socklen_t clientaddr_size = sizeof(clientaddr);
 
@@ -58,7 +59,7 @@ int main(int argc, char **argv) {
 
 // initialize socket with ip address and port, and return the file descriptor for the socket
 // returns -1 on failure
-int init_socket(const char *ip_addr, int port, struct sockaddr_in *sockaddr) {
+int init_socket(struct sockaddr_in *sockaddr, const char *ip_addr, int port) {
 	// initialize socket fd
 	int sockfd = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
 	if (sockfd < 0) {
