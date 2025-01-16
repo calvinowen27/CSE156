@@ -46,19 +46,13 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 
-
-	if (sendto(sockfd, "1hello1", 8, 0, (struct sockaddr *)&serveraddr, serveraddr_size) < 0) {
-		fprintf(stderr, "myclient ~ main(): client failed to send message to server.\n");
+	// send in file to server
+	if (send_file(infd, sockfd, (struct sockaddr *)&serveraddr, serveraddr_size, mtu) < 0) {
+		fprintf(stderr, "myclient ~ main(): failed to send file %s to server.\n", infile_path);
+		exit(1);
 	}
 
-	char buf[4096];
-	buf[4095] = 0;
-
-	if (recvfrom(sockfd, buf, sizeof(buf) - 1, 0, (struct sockaddr *)&serveraddr, &serveraddr_size) < 0) {
-		fprintf(stderr, "myclient ~ main(): something went wrong with receiving packets from server.\n");
-	} else {
-		printf("received:\n%s\n\n", buf);
-	}
+	// receive file echo from server
 
 	printf("client done\n");
 
@@ -82,4 +76,20 @@ int init_socket(struct sockaddr_in *sockaddr, const char *ip_addr, int port) {
 	sockaddr->sin_addr.s_addr = inet_addr(ip_addr);
 
 	return sockfd;
+}
+
+// send file from fd to sockfd, also using sockaddr
+// return 0 on success, -1 on error
+int send_file(int fd, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_size, int mtu) {
+	char buf[mtu];
+
+	int bytes_read;
+	while ((bytes_read = read(fd, buf, sizeof(buf))) > 0) {
+		if (sendto(sockfd, buf, bytes_read, 0, sockaddr, sockaddr_size) < 0) {
+			fprintf(stderr, "myclient ~ send_file(): client failed to send packetto server.\n");
+			return -1;
+		}
+	}
+
+	return 0;
 }
