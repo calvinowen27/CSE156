@@ -7,6 +7,7 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <sys/select.h>
+#include <errno.h>
 #include "myclient.h"
 #include "utils.h"
 
@@ -88,36 +89,28 @@ int init_socket(struct sockaddr_in *sockaddr, const char *ip_addr, int port) {
 	return sockfd;
 }
 
-// split uint32_t into uint8_t[4]
-uint8_t *split_bytes(uint32_t val) {
-	uint8_t *res = calloc(4, sizeof(uint8_t *));
-
-	res[0] = val & 0xff000000;
-	res[1] = val & 0x00ff0000;
-	res[2] = val & 0x0000ff00;
-	res[3] = val & 0x000000ff;
-
-	return res;
-}
-
 // send file from fd to sockfd, also using sockaddr
 // return 0 on success, -1 on error
 int send_file(int fd, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_size, int mtu) {
 	char buf[mtu];
 	memset(buf, 0, sizeof(buf));
 
-	uint32_t packet_num = 0;
+	uint32_t packet_num_sent, packet_num_recvd, new_packet_num;
+	packet_num_sent = 0;
+	packet_num_recvd = -1;
 
 	fd_set fds;
 	FD_SET(sockfd, &fds);
 
-	struct timeval timeout;
-	timeout.tv_sec = 10;
+	int outfd = creat("asdf", 0666);
 
-	int bytes_read;
+	struct timeval timeout;
+	timeout.tv_sec = 60; // 60s timeout for recevfrom server
+
+	int bytes_read, bytes_recvd;
 	while ((bytes_read = read(fd, buf + 4, sizeof(buf) - 4)) > 0) {
 		// assign packet id to first 4 bytes of packet
-		uint8_t *pn_bytes = split_bytes(packet_num);
+		uint8_t *pn_bytes = split_bytes(packet_num_sent);
 		buf[0] = pn_bytes[0]+1;
 		buf[1] = pn_bytes[1]+1;
 		buf[2] = pn_bytes[2]+1;
@@ -125,25 +118,49 @@ int send_file(int fd, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_
 
 		// printf("%d %d %d %d\n", buf[0], buf[1], buf[2], buf[3]);
 		// printf("%s\n", buf);
+		printf("sent: %u\n", packet_num_sent);
 
 		if (sendto(sockfd, buf, bytes_read + 4, 0, sockaddr, sockaddr_size) < 0) {
-			fprintf(stderr, "myclient ~ send_file(): client failed to send packetto server.\n");
+			fprintf(stderr, "myclient ~ send_file(): client failed to send packet to server.\n");
 			return -1;
 		}
 
-		printf("sent: %d\n", buf[3]);
-
 		if (select(sockfd + 1, &fds, NULL, NULL, &timeout)) {
-			if (recvfrom(sockfd, buf, sizeof(buf), 0, sockaddr, &sockaddr_size) > 0) {
-				printf("receive: %d %d %d %d\n", buf[0], buf[1], buf[2], buf[3]);
-				printf("%s\n", buf);
+			if ((bytes_recvd = recvfrom(sockfd, buf, sizeof(buf), 0, sockaddr, &sockaddr_size)) < 0) {
+				fprintf(stderr, "Cannot detect server\n");
+				return -1;
+			} else {
+				buf[0] -= 1;
+				buf[1] -= 1;
+				buf[2] -= 1;
+				buf[3] -= 1;
+				new_packet_num = reunite_bytes((uint8_t *)buf);
+				printf("receive: %u\n", new_packet_num);
+				if (new_packet_num != packet_num_recvd + 1) {
+					fprintf(stderr, "Packet loss detected\n");
+					exit(1);
+				} else {
+					packet_num_recvd = new_packet_num;
+					// write bytes to outfile
+					if (write_n_bytes(outfd, buf + 4, bytes_recvd - 4) < 0) {
+						fprintf(stderr, "myclient ~ send_file(): encountered error writing bytes to outfile\n");
+						fprintf(stderr, "%s\n", strerror(errno));
+						return -1;
+					}
+				}
+				printf("%s\n", buf+4);
 			}
+		} else { // after 60s timeout
+			fprintf(stderr, "Cannot detect server\n");
+			return -1;
 		}
 
-		packet_num += 1;
+		packet_num_sent += 1;
 
 		memset(buf, 0, sizeof(buf));
 	}
+
+	close(outfd);
 
 	return 0;
 }

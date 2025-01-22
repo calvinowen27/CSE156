@@ -85,7 +85,7 @@ int echo_data(int sockfd, struct sockaddr *sockaddr, socklen_t *sock_size) {
 	memset(buf, 0, sizeof(buf));
 
 	while (recvfrom(sockfd, buf, BUFFER_SIZE, 0, sockaddr, sock_size) >= 0) {
-		printf("%d %d %d %d\n", buf[0], buf[1], buf[2], buf[3]);
+		printf("%u %u %u %u\n", buf[0], buf[1], buf[2], buf[3]);
 		printf("%s\n\n", buf+4);
 
 		if (sendto(sockfd, buf, BUFFER_SIZE, 0, sockaddr, *sock_size) < 0) {
