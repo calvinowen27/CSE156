@@ -42,6 +42,11 @@ int main(int argc, char **argv) {
 		fprintf(stderr, "myclient ~ main(): failed to open file %s\n", infile_path);
 	}
 
+	int outfd = creat(outfile_path, 0664);
+	if (outfd < 0) {
+		fprintf(stderr, "myclient ~ main(): failed to open/create outfile %s\n", outfile_path);
+	}
+
 	// initialize socket
 	struct sockaddr_in serveraddr;
 	socklen_t serveraddr_size = sizeof(serveraddr);
@@ -52,23 +57,14 @@ int main(int argc, char **argv) {
 	}
 
 	// send in file to server
-	if (send_file(infd, sockfd, (struct sockaddr *)&serveraddr, serveraddr_size, mtu) < 0) {
-		fprintf(stderr, "myclient ~ main(): failed to send file %s to server.\n", infile_path);
+	if (send_recv_file(infd, outfd, sockfd, (struct sockaddr *)&serveraddr, serveraddr_size, mtu) < 0) {
+		fprintf(stderr, "myclient ~ main(): failed to send or receive file %s to server.\n", infile_path);
 		exit(1);
 	}
 
-	// char buf[BUFFER_SIZE];
-	// buf[BUFFER_SIZE - 1] = 0;
-
-	// // receive file echo from server
-	// while (recvfrom(sockfd, buf, sizeof(buf) - 1, 0, (struct sockaddr *)&serveraddr, &serveraddr_size) > 0) {
-	// 	printf("%s\n", buf + 4);
-	// }
-
-	printf("client done\n");
-
 	close(sockfd);
 	close(infd);
+	close(outfd);
 
 	return 0;
 }
@@ -91,7 +87,7 @@ int init_socket(struct sockaddr_in *sockaddr, const char *ip_addr, int port) {
 
 // send file from fd to sockfd, also using sockaddr
 // return 0 on success, -1 on error
-int send_file(int fd, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_size, int mtu) {
+int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_size, int mtu) {
 	char buf[mtu];
 	memset(buf, 0, sizeof(buf));
 
@@ -102,13 +98,11 @@ int send_file(int fd, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_
 	fd_set fds;
 	FD_SET(sockfd, &fds);
 
-	int outfd = creat("asdf", 0666);
-
 	struct timeval timeout;
 	timeout.tv_sec = 60; // 60s timeout for recevfrom server
 
 	int bytes_read, bytes_recvd;
-	while ((bytes_read = read(fd, buf + 4, sizeof(buf) - 4)) > 0) {
+	while ((bytes_read = read(infd, buf + 4, sizeof(buf) - 4)) > 0) {
 		// assign packet id to first 4 bytes of packet
 		uint8_t *pn_bytes = split_bytes(packet_num_sent);
 		buf[0] = pn_bytes[0]+1;
@@ -116,12 +110,8 @@ int send_file(int fd, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_
 		buf[2] = pn_bytes[2]+1;
 		buf[3] = pn_bytes[3]+1;
 
-		// printf("%d %d %d %d\n", buf[0], buf[1], buf[2], buf[3]);
-		// printf("%s\n", buf);
-		printf("sent: %u\n", packet_num_sent);
-
 		if (sendto(sockfd, buf, bytes_read + 4, 0, sockaddr, sockaddr_size) < 0) {
-			fprintf(stderr, "myclient ~ send_file(): client failed to send packet to server.\n");
+			fprintf(stderr, "myclient ~ send_recv_file(): client failed to send packet to server.\n");
 			return -1;
 		}
 
@@ -135,7 +125,6 @@ int send_file(int fd, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_
 				buf[2] -= 1;
 				buf[3] -= 1;
 				new_packet_num = reunite_bytes((uint8_t *)buf);
-				printf("receive: %u\n", new_packet_num);
 				if (new_packet_num != packet_num_recvd + 1) {
 					fprintf(stderr, "Packet loss detected\n");
 					exit(1);
@@ -143,12 +132,11 @@ int send_file(int fd, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_
 					packet_num_recvd = new_packet_num;
 					// write bytes to outfile
 					if (write_n_bytes(outfd, buf + 4, bytes_recvd - 4) < 0) {
-						fprintf(stderr, "myclient ~ send_file(): encountered error writing bytes to outfile\n");
+						fprintf(stderr, "myclient ~ send_recv_file(): encountered error writing bytes to outfile\n");
 						fprintf(stderr, "%s\n", strerror(errno));
 						return -1;
 					}
 				}
-				printf("%s\n", buf+4);
 			}
 		} else { // after 60s timeout
 			fprintf(stderr, "Cannot detect server\n");
@@ -159,8 +147,6 @@ int send_file(int fd, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_
 
 		memset(buf, 0, sizeof(buf));
 	}
-
-	close(outfd);
 
 	return 0;
 }

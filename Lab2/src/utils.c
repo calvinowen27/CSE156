@@ -15,12 +15,10 @@ uint8_t *split_bytes(uint32_t val) {
 	res[2] = (uint8_t) ((val & 0x0000ff00) >> 8);
 	res[3] = (uint8_t) (val & 0x000000ff);
 
-	printf("split: %u\n", val & 0x0000ff00);
-	printf("split2: %u\n", res[2]);
-
 	return res;
 }
 
+// reuinite uint8_t[4] into uin32_t
 uint32_t reunite_bytes(uint8_t *bytes) {
 	uint32_t res;
 	res = (uint32_t) ((bytes[0] << 24) & 0xff000000) | (uint32_t) ((bytes[1] << 16) & 0x00ff0000) | (uint32_t) ((bytes[2] << 8) & 0x0000ff00) | (uint32_t) (bytes[3] & 0x000000ff);

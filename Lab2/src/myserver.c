@@ -44,8 +44,6 @@ int main(int argc, char **argv) {
 		fprintf(stderr,"myserver ~ main(): server failed to receive from socket.\n");
 	}
 
-	printf("myserver ~ done\n");
-
 	close(sockfd);
 
 	return 0;
@@ -62,8 +60,6 @@ int init_socket(struct sockaddr_in *sockaddr, const char *ip_addr, int port) {
 	}
 
 	// init socket address struct with ip and port
-	// struct sockaddr_in sockaddr;
-
 	sockaddr->sin_family = AF_INET; // IPv4
 	sockaddr->sin_port = htons(port); // convert port endianness
 	sockaddr->sin_addr.s_addr = inet_addr(ip_addr);
@@ -79,15 +75,12 @@ int init_socket(struct sockaddr_in *sockaddr, const char *ip_addr, int port) {
 }
 
 // receive data from sockfd and echo it back as it arrives back to the client
-// this function will run forver once called, or until there is an error (returns -1)
+// this function will run forever once called, or until there is an error (returns -1)
 int echo_data(int sockfd, struct sockaddr *sockaddr, socklen_t *sock_size) {
 	char buf[BUFFER_SIZE];
 	memset(buf, 0, sizeof(buf));
 
 	while (recvfrom(sockfd, buf, BUFFER_SIZE, 0, sockaddr, sock_size) >= 0) {
-		printf("%u %u %u %u\n", buf[0], buf[1], buf[2], buf[3]);
-		printf("%s\n\n", buf+4);
-
 		if (sendto(sockfd, buf, BUFFER_SIZE, 0, sockaddr, *sock_size) < 0) {
 			fprintf(stderr, "myserver ~ main(): server failed to send packets back to client.\n");
 			break;
