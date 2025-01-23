@@ -12,7 +12,7 @@
 #include "utils.h"
 
 #define BUFFER_SIZE 4096
-#define MIN_MTU_SIZE 5
+#define MIN_MSS_SIZE 5
 
 int main(int argc, char **argv) {
 	// handle command line args
@@ -28,15 +28,15 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 
-	int mtu = atoi(argv[3]);																// mtu
-	if (mtu < 0) {
-		printf("Invalid mtu provided. Please provide a positive integer as the mtu.\n");
+	int mss = atoi(argv[3]);																// mss
+	if (mss < 0) {
+		printf("Invalid mss provided. Please provide a positive integer as the mss.\n");
 		exit(1);
 	}
 
-	// check for valid mtu size
-	if (mtu < MIN_MTU_SIZE) {
-		printf("Required minimum MTU is 5.\n");
+	// check for valid mss size
+	if (mss < MIN_MSS_SIZE) {
+		printf("Required minimum mss is 5.\n");
 		exit(1);
 	}
 
@@ -64,7 +64,7 @@ int main(int argc, char **argv) {
 	}
 
 	// send in file to server
-	if (send_recv_file(infd, outfd, sockfd, (struct sockaddr *)&serveraddr, serveraddr_size, mtu) < 0) {
+	if (send_recv_file(infd, outfd, sockfd, (struct sockaddr *)&serveraddr, serveraddr_size, mss) < 0) {
 		fprintf(stderr, "myclient ~ main(): failed to send or receive file %s to server.\n", infile_path);
 		exit(1);
 	}
@@ -94,8 +94,8 @@ int init_socket(struct sockaddr_in *sockaddr, const char *ip_addr, int port) {
 
 // send file from fd to sockfd, also using sockaddr
 // return 0 on success, -1 on error
-int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_size, int mtu) {
-	char buf[mtu];
+int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_size, int mss) {
+	char buf[mss];
 	memset(buf, 0, sizeof(buf));
 
 	uint32_t packet_num_sent, packet_num_recvd, new_packet_num;
