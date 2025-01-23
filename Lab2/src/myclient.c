@@ -12,6 +12,7 @@
 #include "utils.h"
 
 #define BUFFER_SIZE 4096
+#define MIN_MTU_SIZE 5
 
 int main(int argc, char **argv) {
 	// handle command line args
@@ -30,6 +31,12 @@ int main(int argc, char **argv) {
 	int mtu = atoi(argv[3]);																// mtu
 	if (mtu < 0) {
 		printf("Invalid mtu provided. Please provide a positive integer as the mtu.\n");
+		exit(1);
+	}
+
+	// check for valid mtu size
+	if (mtu < MIN_MTU_SIZE) {
+		printf("Required minimum MTU is 5.\n");
 		exit(1);
 	}
 
