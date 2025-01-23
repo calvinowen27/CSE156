@@ -12,7 +12,7 @@
 #include "utils.h"
 
 #define BUFFER_SIZE 4096
-#define MIN_MSS_SIZE 5
+#define MIN_MSS_SIZE 2
 #define WINDOW_SIZE 10 // must be < 256 unless packet ID byte count increases
 
 int main(int argc, char **argv) {
@@ -96,7 +96,7 @@ int init_socket(struct sockaddr_in *sockaddr, const char *ip_addr, int port) {
 // send file from fd to sockfd, also using sockaddr
 // return 0 on success, -1 on error
 int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_size, int mss) {
-	char buf[mss];
+	char buf[mss+1];
 	memset(buf, 0, sizeof(buf));
 
 	uint8_t packet_id_recvd;
@@ -134,7 +134,7 @@ int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, s
 
 	while (bytes_read > 0) { // continue until no more bytes read from file
 		for (packet_id_sent = 1; packet_id_sent <= WINDOW_SIZE; packet_id_sent++) {
-			bytes_read = read(infd, buf + 1, sizeof(buf) - 1);
+			bytes_read = read(infd, buf + 1, mss - 1);
 			if (bytes_read < 0) {
 				fprintf(stderr, "myclient ~ send_recv_file(): encountered an error reading from infile.\n");
 				return -1;
@@ -145,7 +145,7 @@ int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, s
 			// assign packet ID
 			buf[0] = packet_id_sent;
 
-			if (sendto(sockfd, buf, bytes_read + 1, 0, sockaddr, sockaddr_size) < 0) {
+			if (sendto(sockfd, buf, bytes_read+1, 0, sockaddr, sockaddr_size) < 0) {
 				fprintf(stderr, "myclient ~ send_recv_file(): client failed to send packet to server.\n");
 				return -1;
 			}
@@ -155,11 +155,13 @@ int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, s
 			memset(buf, 0, sizeof(buf));
 		}
 
+		memset(buf, 0, sizeof(buf));
+
 		expected_packet_id_recv = 1;
 		packets_recvd = 0;
 		while (packets_recvd < last_packet_id_expected) {
 			if (select(sockfd + 1, &fds, NULL, NULL, &timeout)) { // check there is data to be read from socket
-				if ((bytes_recvd = recvfrom(sockfd, buf, sizeof(buf), 0, sockaddr, &sockaddr_size)) < 0) {
+				if ((bytes_recvd = recvfrom(sockfd, buf, mss, 0, sockaddr, &sockaddr_size)) < 0) {
 					fprintf(stderr, "myclient ~ send_recv_file(): an error occured while receiving data from server.\n");
 					fprintf(stderr, "%s\n", strerror(errno));
 					return -1;
@@ -167,7 +169,7 @@ int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, s
 					packet_id_recvd = (uint8_t)buf[0];
 					if (packet_id_recvd == expected_packet_id_recv) {
 						// write bytes to outfile
-						if (write_n_bytes(outfd, buf + 1, bytes_recvd - 1) < 0) {
+						if (write_n_bytes(outfd, buf + 1, strlen(buf+1)) < 0) {
 							fprintf(stderr, "myclient ~ send_recv_file(): encountered error writing bytes to outfile\n");
 							fprintf(stderr, "%s\n", strerror(errno));
 							return -1;
@@ -184,7 +186,7 @@ int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, s
 						}
 
 						// write bytes to outfile
-						if (write_n_bytes(outfd, buf + 1, bytes_recvd - 1) < 0) {
+						if (write_n_bytes(outfd, buf + 1, strlen(buf+1)) < 0) {
 							fprintf(stderr, "myclient ~ send_recv_file(): encountered error writing bytes to outfile\n");
 							fprintf(stderr, "%s\n", strerror(errno));
 							return -1;
@@ -201,7 +203,7 @@ int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, s
 								// go to correct location in outfile
 								lseek(outfd, ooo_packet_locations[i], SEEK_SET);
 								// write bytes to outfile
-								if (write_n_bytes(outfd, buf + 1, bytes_recvd - 1) < 0) {
+								if (write_n_bytes(outfd, buf + 1, strlen(buf+1)) < 0) {
 									fprintf(stderr, "myclient ~ send_recv_file(): encountered error writing bytes to outfile\n");
 									fprintf(stderr, "%s\n", strerror(errno));
 									return -1;
