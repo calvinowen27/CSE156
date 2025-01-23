@@ -80,6 +80,29 @@ int echo_data(int sockfd, struct sockaddr *sockaddr, socklen_t *sock_size) {
 	char buf[BUFFER_SIZE];
 	memset(buf, 0, sizeof(buf));
 
+	// int i = 0;
+
+	// char packet_buf[5][BUFFER_SIZE];
+
+	// while (recvfrom(sockfd, packet_buf[4-i], BUFFER_SIZE, 0, sockaddr, sock_size) >= 0) {
+	// 	i += 1;
+	// 	if (i == 5) break;
+	// }
+
+	// i = 0;
+
+	// while (sendto(sockfd, packet_buf[i], BUFFER_SIZE, 0, sockaddr, *sock_size) >= 0) {
+	// 	memset(packet_buf[i], 0, BUFFER_SIZE);
+
+	// 	if (recvfrom(sockfd, packet_buf[i], BUFFER_SIZE, 0, sockaddr, sock_size) < 0) {
+	// 		fprintf(stderr, "myserver ~ main(): server failed to recv packets from client.\n");
+	// 		break;
+	// 	}
+
+	// 	i += 1;
+	// 	if (i == 5) i = 0;
+	// }
+
 	while (recvfrom(sockfd, buf, BUFFER_SIZE, 0, sockaddr, sock_size) >= 0) {
 		if (sendto(sockfd, buf, BUFFER_SIZE, 0, sockaddr, *sock_size) < 0) {
 			fprintf(stderr, "myserver ~ main(): server failed to send packets back to client.\n");

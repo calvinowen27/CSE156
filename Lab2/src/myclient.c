@@ -13,7 +13,7 @@
 
 #define BUFFER_SIZE 4096
 #define MIN_MSS_SIZE 2
-#define WINDOW_SIZE 10 // must be < 256 unless packet ID byte count increases
+#define WINDOW_SIZE 50 // must be < 256 unless packet ID byte count increases
 
 int main(int argc, char **argv) {
 	// handle command line args
@@ -45,14 +45,16 @@ int main(int argc, char **argv) {
 	char *outfile_path = argv[5];															// outfile path
 	(void)outfile_path;
 	
-	int infd = open(infile_path, 0600);
+	int infd = open(infile_path, O_RDONLY, 0664);
 	if (infd < 0) {
 		fprintf(stderr, "myclient ~ main(): failed to open file %s\n", infile_path);
+		exit(1);
 	}
 
-	int outfd = creat(outfile_path, 0664);
+	int outfd = open(outfile_path, O_RDWR | O_CREAT | O_TRUNC, 0664);
 	if (outfd < 0) {
 		fprintf(stderr, "myclient ~ main(): failed to open/create outfile %s\n", outfile_path);
+		exit(1);
 	}
 
 	// initialize socket
@@ -167,6 +169,7 @@ int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, s
 					return -1;
 				} else { // recvfrom succeeds
 					packet_id_recvd = (uint8_t)buf[0];
+					printf("recvfrom() success: id %u\n", packet_id_recvd);
 					if (packet_id_recvd == expected_packet_id_recv) {
 						// write bytes to outfile
 						if (write_n_bytes(outfd, buf + 1, strlen(buf+1)) < 0) {
@@ -185,6 +188,8 @@ int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, s
 							num_packets_not_recvd += 1;
 						}
 
+						printf("ooo1: id %u\n", packet_id_recvd);
+
 						// write bytes to outfile
 						if (write_n_bytes(outfd, buf + 1, strlen(buf+1)) < 0) {
 							fprintf(stderr, "myclient ~ send_recv_file(): encountered error writing bytes to outfile\n");
@@ -198,10 +203,19 @@ int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, s
 						// write packet data to file depending on ooo buffer file location
 						// pop packet data from ooo buffers
 						// change all ooo packet file locations with larger ID to current position of seek ptr
+						printf("ooo2\n");
+
 						for (i = 0; i < num_packets_not_recvd; i++) {
+							printf("for\n");
 							if (ooo_packet_ids[i] == packet_id_recvd) {
 								// go to correct location in outfile
-								lseek(outfd, ooo_packet_locations[i], SEEK_SET);
+								off_t file_idx = lseek(outfd, ooo_packet_locations[i], SEEK_SET);
+
+								if (shift_file_contents(outfd, file_idx, strlen(buf+1)) < 0) {
+									fprintf(stderr, "myclient ~ send_recv_file(): encountered error shifting file contents for OOO write.\n");
+									return -1;
+								}
+
 								// write bytes to outfile
 								if (write_n_bytes(outfd, buf + 1, strlen(buf+1)) < 0) {
 									fprintf(stderr, "myclient ~ send_recv_file(): encountered error writing bytes to outfile\n");
@@ -210,15 +224,19 @@ int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, s
 								}
 								
 								// shift packet info down in buffer
-								if (i < num_packets_not_recvd) {
+								if (i < num_packets_not_recvd - 1) {
 									ooo_packet_ids[i] = ooo_packet_ids[i+1];
 									ooo_packet_locations[i] = lseek(outfd, 0, SEEK_CUR);
+								} else {
+									ooo_packet_ids[i] = 0;
+									ooo_packet_locations[i] = 0;
 								}
 							} else if (ooo_packet_ids[i] > packet_id_recvd) {
 								// shift packet info down in buffer
-								if (i < num_packets_not_recvd) {
+								if (i < num_packets_not_recvd - 1) {
 									ooo_packet_ids[i] = ooo_packet_ids[i+1];
 									ooo_packet_locations[i] = lseek(outfd, 0, SEEK_CUR);
+									printf("seek set to %lld\n", ooo_packet_locations[i]);
 								} else {
 									ooo_packet_ids[i] = 0;
 									ooo_packet_locations[i] = 0;
@@ -226,6 +244,7 @@ int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, s
 								}
 							}
 						}
+						
 
 						lseek(outfd, 0, SEEK_END); // reset seek ptr in case more packets come in
 

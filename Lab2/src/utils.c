@@ -1,6 +1,12 @@
-#include "stdio.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <stdbool.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <string.h>
+#include <sys/stat.h>
+#include "utils.h"
 
 void logerr(const char *err) {
 	fprintf(stderr, "%s\n", err);
@@ -25,6 +31,25 @@ uint32_t reunite_bytes(uint8_t *bytes) {
 	return res; 
 }
 
+// read into buf from sockfd. reads n bytes or the size of buf, whichever is smaller
+// return bytes read on success, -1 for error
+int read_n_bytes(int fd, char *buf, int n) {
+	int offset = 0;
+	int bytes_read = 0;
+
+	while (offset < n && (bytes_read = read(fd, buf + offset, n - offset)) > 0) {
+		offset += bytes_read;
+	}
+
+	if (bytes_read < 0) {
+		fprintf(stderr, "read_n_bytes(): read() failed\n");
+		fprintf(stderr, "%s\n", strerror(errno));
+		return -1;
+	}
+
+	return offset;
+}
+
 // write n bytes from buf into sockfd
 // returns bytes written on success, -1 on error
 int write_n_bytes(int sockfd, char *buf, int n) {
@@ -46,4 +71,67 @@ int write_n_bytes(int sockfd, char *buf, int n) {
 	}
 
 	return offset;
+}
+
+// continually read bytes from infd and write them to outfd, until n bytes have been passed
+// return 0 on success, -1 for error
+int pass_n_bytes(int infd, int outfd, int n) {
+	char buf[n];
+	
+	int bytes_read = 0;
+	int total_bytes_read = 0;
+	while ((bytes_read = read_n_bytes(infd, buf, n)) < n) {
+		if (bytes_read < 0) {
+			fprintf(stderr, "pass_n_bytes(): read_n_bytes() failed\n");
+			return -1;
+		}
+
+		if (write_n_bytes(outfd, buf, bytes_read) < 0) {
+			fprintf(stderr, "pass_n_bytes(): write_n_bytes() failed\n");
+			return -1;
+		}
+
+		total_bytes_read += bytes_read;
+	}
+
+	if (write_n_bytes(outfd, buf, bytes_read) < 0) {
+		fprintf(stderr, "pass_n_bytes(): write_n_bytes() failed\n");
+		return -1;
+	}
+
+	total_bytes_read += bytes_read;
+
+	if (total_bytes_read != n) {
+		fprintf(stderr, "pass_n_bytes(): bytes read does not equal n\n");
+		return -1;
+	}
+
+	return 0;
+}
+
+int shift_file_contents(int fd, off_t start_idx, int amount) {
+	off_t prev_seek = lseek(fd, 0, SEEK_CUR);
+	
+	off_t begin = lseek(fd, 0, SEEK_END);
+
+	char buf[amount];
+
+	while (begin > start_idx) {
+		begin = lseek(fd, begin - amount, SEEK_SET);
+		printf(" = %lld\n", begin);
+
+		if (read_n_bytes(fd, buf, amount) < 0) {
+			fprintf(stderr, "shift_file_contents(): read_n_bytes() failed.\n");
+			return -1;
+		}
+		printf("writing '%s' at index %lld\n", buf, begin);
+		if (write_n_bytes(fd, buf, amount) < 0) {
+			fprintf(stderr, "shift_file_contents(): write_n_bytes failed.\n");
+			return -1;
+		}
+	}
+
+	lseek(fd, prev_seek, SEEK_SET);
+
+	return 0;
 }
