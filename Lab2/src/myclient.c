@@ -354,9 +354,12 @@ int create_file_directory(const char *file_path) {
 			outfile_dir[fs_idx] = 0;
 			memcpy(outfile_dir, file_path, fs_idx );
 
-			if (mkdir(outfile_dir, 0700) < 0) {
-				fprintf(stderr, "myclient ~ create_file_directory(): failed to make directory %s\n", outfile_dir);
-				exit(1);
+			struct stat st = {0};
+			if (stat(outfile_dir, &st) == -1) {
+				if (mkdir(outfile_dir, 0700) < 0) {
+					fprintf(stderr, "myclient ~ create_file_directory(): failed to make directory %s\n", outfile_dir);
+					exit(1);
+				}
 			}
 		}
 	}
