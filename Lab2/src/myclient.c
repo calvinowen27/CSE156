@@ -8,6 +8,8 @@
 #include <fcntl.h>
 #include <sys/select.h>
 #include <errno.h>
+#include <sys/stat.h>
+#include <regex.h>
 #include "myclient.h"
 #include "utils.h"
 
@@ -49,6 +51,11 @@ int main(int argc, char **argv) {
 	int infd = open(infile_path, O_RDONLY, 0664);
 	if (infd < 0) {
 		fprintf(stderr, "myclient ~ main(): failed to open file %s\n", infile_path);
+		exit(1);
+	}
+
+	if (create_file_directory(outfile_path) < 0) {
+		fprintf(stderr, "myclient ~ main(): failed to create outfile directories.\n");
 		exit(1);
 	}
 
@@ -260,6 +267,40 @@ int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, s
 			memset(buf, 0, sizeof(buf));
 		}
 	}
+
+	return 0;
+}
+
+int create_file_directory(const char *file_path) {
+	// regex for matching last / in filepath
+	regex_t regex_;
+	if (regcomp(&regex_, "/", 0) < 0) {
+		fprintf(stderr, "myclient ~ create_file_directory(): regcomp() failed\n");
+		return -1;
+	}
+
+	regmatch_t pmatch;
+	int res = 0, fs_idx = 0;
+
+	while (res != REG_NOMATCH) {
+		if ((res = regexec(&regex_, file_path + fs_idx, 1, &pmatch, 0)) < 0) {
+			fprintf(stderr, "myclient ~ create_file_directory(): regexec() failed\n");
+			exit(1);
+		} else if (res != REG_NOMATCH) {
+			fs_idx += pmatch.rm_eo;
+
+			char outfile_dir[fs_idx + 1];
+			outfile_dir[fs_idx] = 0;
+			memcpy(outfile_dir, file_path, fs_idx );
+
+			if (mkdir(outfile_dir, 0700) < 0) {
+				fprintf(stderr, "myclient ~ create_file_directory(): failed to make directory %s\n", outfile_dir);
+				exit(1);
+			}
+		}
+	}
+	
+	regfree(&regex_);
 
 	return 0;
 }
