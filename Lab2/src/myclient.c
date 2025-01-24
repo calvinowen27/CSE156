@@ -13,7 +13,8 @@
 
 #define BUFFER_SIZE 4096
 #define MIN_MSS_SIZE 2
-#define WINDOW_SIZE 50 // must be < 256 unless packet ID byte count increases
+#define WINDOW_SIZE 100 // must be < 256 unless packet ID byte count increases
+#define TIMEOUT_SECS 10
 
 int main(int argc, char **argv) {
 	// handle command line args
@@ -107,7 +108,7 @@ int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, s
 	FD_SET(sockfd, &fds);
 
 	struct timeval timeout;
-	timeout.tv_sec = 60; // 60s timeout for recvfrom server
+	timeout.tv_sec = TIMEOUT_SECS; // 60s timeout for recvfrom server
 
 	/*
 			- allocate pairs of packets received to place in file (if OOO)
@@ -132,7 +133,7 @@ int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, s
 	int bytes_read = 1, bytes_recvd, last_packet_id_expected = 1;
 
 	uint8_t packet_id_sent, expected_packet_id_recv;
-	int packets_recvd = 0;
+	int num_packets_recvd = 0;
 
 	while (bytes_read > 0) { // continue until no more bytes read from file
 		for (packet_id_sent = 1; packet_id_sent <= WINDOW_SIZE; packet_id_sent++) {
@@ -160,8 +161,8 @@ int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, s
 		memset(buf, 0, sizeof(buf));
 
 		expected_packet_id_recv = 1;
-		packets_recvd = 0;
-		while (packets_recvd < last_packet_id_expected) {
+		num_packets_recvd = 0;
+		while (num_packets_recvd < last_packet_id_expected) {
 			if (select(sockfd + 1, &fds, NULL, NULL, &timeout)) { // check there is data to be read from socket
 				if ((bytes_recvd = recvfrom(sockfd, buf, mss, 0, sockaddr, &sockaddr_size)) < 0) {
 					fprintf(stderr, "myclient ~ send_recv_file(): an error occured while receiving data from server.\n");
@@ -169,7 +170,6 @@ int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, s
 					return -1;
 				} else { // recvfrom succeeds
 					packet_id_recvd = (uint8_t)buf[0];
-					printf("recvfrom() success: id %u\n", packet_id_recvd);
 					if (packet_id_recvd == expected_packet_id_recv) {
 						// write bytes to outfile
 						if (write_n_bytes(outfd, buf + 1, strlen(buf+1)) < 0) {
@@ -188,8 +188,6 @@ int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, s
 							num_packets_not_recvd += 1;
 						}
 
-						printf("ooo1: id %u\n", packet_id_recvd);
-
 						// write bytes to outfile
 						if (write_n_bytes(outfd, buf + 1, strlen(buf+1)) < 0) {
 							fprintf(stderr, "myclient ~ send_recv_file(): encountered error writing bytes to outfile\n");
@@ -203,10 +201,7 @@ int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, s
 						// write packet data to file depending on ooo buffer file location
 						// pop packet data from ooo buffers
 						// change all ooo packet file locations with larger ID to current position of seek ptr
-						printf("ooo2\n");
-
 						for (i = 0; i < num_packets_not_recvd; i++) {
-							printf("for\n");
 							if (ooo_packet_ids[i] == packet_id_recvd) {
 								// go to correct location in outfile
 								off_t file_idx = lseek(outfd, ooo_packet_locations[i], SEEK_SET);
@@ -236,7 +231,6 @@ int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, s
 								if (i < num_packets_not_recvd - 1) {
 									ooo_packet_ids[i] = ooo_packet_ids[i+1];
 									ooo_packet_locations[i] = lseek(outfd, 0, SEEK_CUR);
-									printf("seek set to %lld\n", ooo_packet_locations[i]);
 								} else {
 									ooo_packet_ids[i] = 0;
 									ooo_packet_locations[i] = 0;
@@ -245,7 +239,6 @@ int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, s
 							}
 						}
 						
-
 						lseek(outfd, 0, SEEK_END); // reset seek ptr in case more packets come in
 
 						// expected not recvd yet, leave value the same
@@ -254,15 +247,15 @@ int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, s
 			} else { // after 60s timeout
 				// if haven't received more packets than ooo packets, can't detect server
 				// otherwise we've timed out waiting for a dropped packet
-				if (last_packet_id_expected - packets_recvd > num_packets_not_recvd) {
-					fprintf(stderr, "Cannot detect server.\n");
+				if (last_packet_id_expected - num_packets_recvd - 1 > num_packets_not_recvd) {
+					fprintf(stderr, "Cannot detect server. %d > %d\n", last_packet_id_expected - num_packets_recvd, num_packets_not_recvd);
 				} else {
 					fprintf(stderr, "Packet loss detected.\n");
 				}
 				return -1;
 			}
 
-			packets_recvd += 1;
+			num_packets_recvd += 1;
 
 			memset(buf, 0, sizeof(buf));
 		}
