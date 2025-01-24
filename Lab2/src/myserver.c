@@ -11,8 +11,9 @@
 #include "myserver.h"
 #include "utils.h"
 
-#define IP_ADDR "127.0.0.1"
+// #define IP_ADDR "127.0.0.1"
 #define BUFFER_SIZE 4096
+#define HEADER_SIZE 2
 
 int main(int argc, char **argv) {
 	// handle command line args
@@ -31,7 +32,7 @@ int main(int argc, char **argv) {
 	struct sockaddr_in serveraddr, clientaddr;
 	socklen_t clientaddr_size = sizeof(clientaddr);
 
-	int sockfd = init_socket(&serveraddr, IP_ADDR, port);
+	int sockfd = init_socket(&serveraddr, port);
 	if (sockfd < 0) {
 		fprintf(stderr, "myserver ~ main(): server init_socket() failed.\n");
 		exit(1);
@@ -51,22 +52,22 @@ int main(int argc, char **argv) {
 
 // initialize socket with ip address and port, and return the file descriptor for the socket
 // returns -1 on failure
-int init_socket(struct sockaddr_in *sockaddr, const char *ip_addr, int port) {
+int init_socket(struct sockaddr_in *sockaddr, int port) {
 	// initialize socket fd
 	int sockfd = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
 	if (sockfd < 0) {
-		fprintf(stderr, "init_socket(): failed to initialize socket\n");
+		fprintf(stderr, "myserver ~ init_socket(): failed to initialize socket\n");
 		return -1;
 	}
 
 	// init socket address struct with ip and port
 	sockaddr->sin_family = AF_INET; // IPv4
 	sockaddr->sin_port = htons(port); // convert port endianness
-	sockaddr->sin_addr.s_addr = inet_addr(ip_addr);
+	sockaddr->sin_addr.s_addr = INADDR_ANY;
 
 	// bind socket
 	if (bind(sockfd, (struct sockaddr *)sockaddr, sizeof(*sockaddr)) < 0) {
-		fprintf(stderr, "init_socket(): failed to bind socket\n");
+		fprintf(stderr, "myserver ~ init_socket(): failed to bind socket\n");
 		fprintf(stderr, "%s\n", strerror(errno));
 		return -1;
 	}
@@ -80,33 +81,34 @@ int echo_data(int sockfd, struct sockaddr *sockaddr, socklen_t *sock_size) {
 	char buf[BUFFER_SIZE];
 	memset(buf, 0, sizeof(buf));
 
-	// int i = 0;
+	uint8_t next_client_id = 2, serving_client_id = 0;
 
-	// char packet_buf[5][BUFFER_SIZE];
+	int bytes_recvd, waiting_for_client = 1;
+	while ((bytes_recvd = recvfrom(sockfd, buf, BUFFER_SIZE, 0, sockaddr, sock_size)) >= 0) {
+		if ((uint8_t)buf[1] == serving_client_id) {
+			if (bytes_recvd > HEADER_SIZE) { // received good packet, echo back
+				if (sendto(sockfd, buf, BUFFER_SIZE, 0, sockaddr, *sock_size) < 0) {
+					fprintf(stderr, "myserver ~ main(): server failed to send packets back to client.\n");
+					break;
+				}
+			} else { // client terminated connection, serve next client
+				waiting_for_client = 1;
+				next_client_id = 2;
+			}
+		} else {
+			if (waiting_for_client) {
+				buf[1] = next_client_id;
+				serving_client_id = next_client_id;
+				waiting_for_client = 0;
+				next_client_id += 1;
+			} else {
+				buf[HEADER_SIZE] = 0;
+			}
 
-	// while (recvfrom(sockfd, packet_buf[4-i], BUFFER_SIZE, 0, sockaddr, sock_size) >= 0) {
-	// 	i += 1;
-	// 	if (i == 5) break;
-	// }
-
-	// i = 0;
-
-	// while (sendto(sockfd, packet_buf[i], BUFFER_SIZE, 0, sockaddr, *sock_size) >= 0) {
-	// 	memset(packet_buf[i], 0, BUFFER_SIZE);
-
-	// 	if (recvfrom(sockfd, packet_buf[i], BUFFER_SIZE, 0, sockaddr, sock_size) < 0) {
-	// 		fprintf(stderr, "myserver ~ main(): server failed to recv packets from client.\n");
-	// 		break;
-	// 	}
-
-	// 	i += 1;
-	// 	if (i == 5) i = 0;
-	// }
-
-	while (recvfrom(sockfd, buf, BUFFER_SIZE, 0, sockaddr, sock_size) >= 0) {
-		if (sendto(sockfd, buf, BUFFER_SIZE, 0, sockaddr, *sock_size) < 0) {
-			fprintf(stderr, "myserver ~ main(): server failed to send packets back to client.\n");
-			break;
+			if (sendto(sockfd, buf, BUFFER_SIZE, 0, sockaddr, *sock_size) < 0) {
+				fprintf(stderr, "myserver ~ main(): server failed to send packets back to client.\n");
+				break;
+			}
 		}
 
 		memset(buf, 0, sizeof(buf));
