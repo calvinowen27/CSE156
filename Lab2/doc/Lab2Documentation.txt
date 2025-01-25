@@ -61,6 +61,20 @@ If the client receives out-of-order packets but has to wait at least 60s for a p
 the packets got lost and terminates.
 
 
+src Files:
+-----------
+myclient.c - C file implementing the main functionality of the client
+
+myclient.h - Header file defining prototype functions for myclient.c
+
+myserver.c - C file implementing the main functionality of the echo server
+
+myserver.h - Header file defining prototype functions for myserver.c
+
+utils.c - C file implementing utility read/write functions to be used in myclient.c, myserver.c, oooserver.c, and crashingserver.c
+
+utils.h - Header file defining prototype functions for utils.h
+
 
 Test Cases:
 ------------
