@@ -4,19 +4,85 @@ By: Calvin Owen 1884240
 
 Description:
 -------------
-
+This lab implements a simple client and echo server that communicate via UDP. The server echoes and packets sent by the client
+back to it. The client sends a user-specified file to the server, and reconstructs the same file from the server response. The 
+client can tolerate out-of-order packets and losing connection to the server.
 
 Usage:
 -------
+First, make sure to build the myclient and myserver executables using the `make` command. This will build the executables 
+to the bin/ directory.
+In the same directory as the myclient and myserver executable, you can run the applications with their respective commands:
 
+`./myserver [port]`
+`./myclient [Server IPv4 address] [port] [UDP datagram mss] [input file path] [output file path]`
 
-Implementation:
+Note: the server must be up and running before the client attempts to connect to it.
+
+The server will start and will wait for UDP datagrams sent to the specified port.
+The UDP datagram mss is the size of the datagrams that will be sent to the server. The minimum size is 3, but 1024-4096 is 
+recommended.
+
+Here are example commands with all of the arguments filled in:
+
+`./myserver 9090`
+`./myclient 127.0.0.1 9090 1024 in/directory/file.txt out/directory/file.txt`
+
+Implementation/Protocol:
 ----------------
+The packet protocol I defined is quite simple. The packet header only uses 2 bytes. The rest of the packet (mss - 2 bytes) 
+is used to store the contents of the file. The first byte of the header hold the ID of the packet, which increments with 
+each packet sent within a window. The second byte of the header holds the client ID.
+
+The client ID is used by the server to determine if it is the client it is currently serving or not. If another client tries to 
+connect, the server will deny the connection until the first client is done. The client ID is assigned by the server after the 
+first packet is received from the client.
+
+A connection is initialized with a packet sent with a client ID of 1. If the server is not currently serving a client, it will 
+accept by echoing the packet with the ID the client should use going forward. Once a client is finished sending the file 
+contents, it sends a termination packet with a length of 3, the third byte being a null byte. This is interpreted by the server 
+as a connection termination, and it opens itself back up to other clients.
+
+The packet ID is used by the client to reorder the packets into the output file, should they arrive from the server out of order. 
+If a packet arrives before it is expected, the client adds all packet IDs between the last received packet and the newest packet 
+to a buffer, along with the respective locations their data should be placed in the output file. When a packet is received and 
+already has their ID placed in the buffer, the data it is carrying is inserted into the file at the location specified from the 
+buffer. The client knows how many packets it should receive from the server since they are all echoed from the client originally, 
+so once all packets are received, the client is done.
+
+The packets are sent by the client in a window. The window size currently defined is 100. This ensures that there is never any 
+packet ID overflow, as once a window closes, the packet IDs are reset to 1. If the size of the window is too large, the server 
+won't be able to process all of them and packets will be lost. The window method also increases throughput of file transfers 
+for larger files. The client continuously sends a window of packets and then waits to receive the same window of packets until 
+the entire input file has been sent and received.
+
+If the client doesn't hear from the server within 60s while expecting new packets, it assumes the connection is lost and terminates.
+If the client receives out-of-order packets but has to wait at least 60s for a packet it should have already received, it assumes 
+the packets got lost and terminates.
+
 
 
 Test Cases:
 ------------
+run_tests.sh - run all test in the folder
+
+test_ascii.sh - test myserver and myclient to make sure that small and large files can be sent, echoed, and reconstructed correctly
+
+test_bad_ip.sh - test myclient with a bad input ip address
+
+test_multiple_clients.sh - test myserver to see if it can handle packets from multiple clients
+
+test_ooo_server.sh - test myclient with oooserver to see if file can be reconstructed correctly if packets are received out of 
+order from the server
+
+test_server_crash.sh - test myclient to make sure nothing bad happens if it loses connection to the server in the middle of 
+receiving packets
+
 
 
 Shortcomings:
 --------------
+The server can only handle one client at a time, which is unfortunate. The client also takes at least 60 seconds to recognize 
+a lost connection or packet loss, which is also an inconvenience. The client will create the output file and directories no 
+matter the outcome of the file sending, so if the server is unreachable, there will still be an empty output file. This is also 
+true for a bad IP address: if the address is invalid, it simply won't connect to the server.

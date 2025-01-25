@@ -17,7 +17,7 @@
 #define HEADER_SIZE 2
 #define MIN_MSS_SIZE HEADER_SIZE + 1
 #define WINDOW_SIZE 100 // must be < 256 unless packet ID byte count increases
-#define TIMEOUT_SECS 5
+#define TIMEOUT_SECS 60
 
 int main(int argc, char **argv) {
 	// handle command line args
