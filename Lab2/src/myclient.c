@@ -17,7 +17,7 @@
 #define HEADER_SIZE 2
 #define MIN_MSS_SIZE HEADER_SIZE + 1
 #define WINDOW_SIZE 100 // must be < 256 unless packet ID byte count increases
-#define TIMEOUT_SECS 60
+#define TIMEOUT_SECS 5
 
 int main(int argc, char **argv) {
 	// handle command line args
@@ -55,15 +55,22 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 
-	if (create_file_directory(outfile_path) < 0) {
-		fprintf(stderr, "myclient ~ main(): failed to create outfile directories.\n");
-		exit(1);
-	}
+	int outfd;
 
-	int outfd = open(outfile_path, O_RDWR | O_CREAT | O_TRUNC, 0664);
-	if (outfd < 0) {
-		fprintf(stderr, "myclient ~ main(): failed to open/create outfile %s\n", outfile_path);
-		exit(1);
+	if (create_file_directory(outfile_path) < 0) {
+		fprintf(stderr, "myclient ~ main(): failed to create outfile directories. Attempting to open file anyway.\n");
+		outfd = open(outfile_path, O_RDWR | O_CREAT | O_TRUNC, 0664);
+		if (outfd < 0) {
+			fprintf(stderr, "myclient ~ main(): failed to open/create outfile %s\n", outfile_path);
+			exit(1);
+		}
+		fprintf(stderr, "myclient ~ main(): outfile creation successful.\n");
+	} else {
+		outfd = open(outfile_path, O_RDWR | O_CREAT | O_TRUNC, 0664);
+		if (outfd < 0) {
+			fprintf(stderr, "myclient ~ main(): failed to open/create outfile %s\n", outfile_path);
+			exit(1);
+		}
 	}
 
 	// initialize socket
@@ -99,7 +106,11 @@ int init_socket(struct sockaddr_in *sockaddr, const char *ip_addr, int port) {
 
 	sockaddr->sin_family = AF_INET;
 	sockaddr->sin_port = htons(port);
-	sockaddr->sin_addr.s_addr = inet_addr(ip_addr);
+	// sockaddr->sin_addr.s_addr = inet_addr(ip_addr);
+	if (inet_pton(AF_INET, ip_addr, &(sockaddr->sin_addr.s_addr)) < 0) {
+		fprintf(stderr, "myclient ~ init_socket(): invalid ip address provided\n");
+		return -1;
+	}
 
 	return sockfd;
 }
@@ -112,8 +123,12 @@ int send_window_packets(int infd, int sockfd, struct sockaddr *sockaddr, socklen
 
 	uint8_t packet_id_sent;
 
+	// printf("sending packet window\n");
+
 	for (packet_id_sent = 1; packet_id_sent <= window_size; packet_id_sent++) {
+		// printf("sending packet %u\n", packet_id_sent);
 		bytes_read = read(infd, buf+HEADER_SIZE, mss-HEADER_SIZE);
+		// printf("made it past read\n");
 		if (bytes_read < 0) {
 			fprintf(stderr, "myclient ~ send_recv_file(): encountered an error reading from infile.\n");
 			return -1;
@@ -147,7 +162,7 @@ int send_window_packets(int infd, int sockfd, struct sockaddr *sockaddr, socklen
 	return bytes_read;
 }
 
-int recv_window_packets(int outfd, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_size, int mss, uint8_t last_packet_id_expected, uint8_t **ooo_packet_ids, off_t **ooo_packet_locations, uint8_t *client_id) {
+int recv_window_packets(int outfd, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_size, int mss, uint8_t last_packet_id_expected, uint8_t *ooo_packet_ids, off_t *ooo_packet_locations, uint8_t *client_id) {
 	char buf[mss+1];
 	memset(buf, 0, sizeof(buf));
 
@@ -156,8 +171,8 @@ int recv_window_packets(int outfd, int sockfd, struct sockaddr *sockaddr, sockle
 	fd_set fds;
 	FD_SET(sockfd, &fds);
 
-	struct timeval timeout;
-	timeout.tv_sec = TIMEOUT_SECS; // 60s timeout for recvfrom server
+	struct timeval timeout = { TIMEOUT_SECS, 0 };
+	// timeout.tv_sec = TIMEOUT_SECS; // 60s timeout for recvfrom server
 
 	int num_packets_not_recvd = 0; // number of packets still out (data in use in above arrays)
 	int bytes_recvd, num_packets_recvd = 0;
@@ -165,7 +180,9 @@ int recv_window_packets(int outfd, int sockfd, struct sockaddr *sockaddr, sockle
 	uint8_t expected_packet_id_recv = 1;
 
 	while (num_packets_recvd < last_packet_id_expected) {
-		if (select(sockfd + 1, &fds, NULL, NULL, &timeout)) { // check there is data to be read from socket
+		int res;
+		timeout.tv_sec = TIMEOUT_SECS;
+		if ((res = select(sockfd + 1, &fds, NULL, NULL, &timeout)) > 0) { // check there is data to be read from socket
 			if ((bytes_recvd = recvfrom(sockfd, buf, mss, 0, sockaddr, &sockaddr_size)) < 0) {
 				fprintf(stderr, "myclient ~ send_recv_file(): an error occured while receiving data from server.\n");
 				fprintf(stderr, "%s\n", strerror(errno));
@@ -183,6 +200,7 @@ int recv_window_packets(int outfd, int sockfd, struct sockaddr *sockaddr, sockle
 						continue; // packet was not intended for me
 					}
 				}
+
 				packet_id_recvd = (uint8_t)buf[0];
 				if (packet_id_recvd == expected_packet_id_recv) {
 					// write bytes to outfile
@@ -197,8 +215,8 @@ int recv_window_packets(int outfd, int sockfd, struct sockaddr *sockaddr, sockle
 				} else if (packet_id_recvd > expected_packet_id_recv) { // packet recvd too soon
 					// store all packets in between recvd and expected into ooo buffer with file locations
 					for (uint8_t id = expected_packet_id_recv; id < packet_id_recvd; id++) {
-						*ooo_packet_ids[num_packets_not_recvd] = id;
-						*ooo_packet_locations[num_packets_not_recvd] = lseek(outfd, 0, SEEK_END);
+						ooo_packet_ids[num_packets_not_recvd] = id;
+						ooo_packet_locations[num_packets_not_recvd] = lseek(outfd, 0, SEEK_END);
 						num_packets_not_recvd += 1;
 					}
 
@@ -216,9 +234,9 @@ int recv_window_packets(int outfd, int sockfd, struct sockaddr *sockaddr, sockle
 					// pop packet data from ooo buffers
 					// change all ooo packet file locations with larger ID to current position of seek ptr
 					for (int i = 0; i < num_packets_not_recvd; i++) {
-						if (*ooo_packet_ids[i] == packet_id_recvd) {
+						if (ooo_packet_ids[i] == packet_id_recvd) {
 							// go to correct location in outfile
-							off_t file_idx = lseek(outfd, *ooo_packet_locations[i], SEEK_SET);
+							off_t file_idx = lseek(outfd, ooo_packet_locations[i], SEEK_SET);
 
 							if (shift_file_contents(outfd, file_idx, strlen(buf+HEADER_SIZE)) < 0) {
 								fprintf(stderr, "myclient ~ send_recv_file(): encountered error shifting file contents for OOO write.\n");
@@ -234,20 +252,20 @@ int recv_window_packets(int outfd, int sockfd, struct sockaddr *sockaddr, sockle
 							
 							// shift packet info down in buffer
 							if (i < num_packets_not_recvd - 1) {
-								*ooo_packet_ids[i] = *ooo_packet_ids[i+1];
-								*ooo_packet_locations[i] = lseek(outfd, 0, SEEK_CUR);
+								ooo_packet_ids[i] = ooo_packet_ids[i+1];
+								ooo_packet_locations[i] = lseek(outfd, 0, SEEK_CUR);
 							} else {
-								*ooo_packet_ids[i] = 0;
-								*ooo_packet_locations[i] = 0;
+								ooo_packet_ids[i] = 0;
+								ooo_packet_locations[i] = 0;
 							}
-						} else if (*ooo_packet_ids[i] > packet_id_recvd) {
+						} else if (ooo_packet_ids[i] > packet_id_recvd) {
 							// shift packet info down in buffer
 							if (i < num_packets_not_recvd - 1) {
-								*ooo_packet_ids[i] = *ooo_packet_ids[i+1];
-								*ooo_packet_locations[i] = lseek(outfd, 0, SEEK_CUR);
+								ooo_packet_ids[i] = ooo_packet_ids[i+1];
+								ooo_packet_locations[i] = lseek(outfd, 0, SEEK_CUR);
 							} else {
-								*ooo_packet_ids[i] = 0;
-								*ooo_packet_locations[i] = 0;
+								ooo_packet_ids[i] = 0;
+								ooo_packet_locations[i] = 0;
 								num_packets_not_recvd -= 1;
 							}
 						}
@@ -261,7 +279,7 @@ int recv_window_packets(int outfd, int sockfd, struct sockaddr *sockaddr, sockle
 		} else { // after 60s timeout
 			// if haven't received more packets than ooo packets, can't detect server
 			// otherwise we've timed out waiting for a dropped packet
-			if (last_packet_id_expected - num_packets_recvd - 1 > num_packets_not_recvd) {
+			if (last_packet_id_expected - num_packets_recvd > num_packets_not_recvd) {
 				fprintf(stderr, "Cannot detect server.\n");
 			} else {
 				fprintf(stderr, "Packet loss detected.\n");
@@ -299,6 +317,8 @@ int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, s
 		ooo_packet_locations[i] = 0;
 	}
 
+	// printf("\n\nooo_packet_ids: %ld, &ooo_packet_ids: %ld, (uint8_t **)&ooo_packet_idx: %ld\n\n", (intptr_t)ooo_packet_ids, &ooo_packet_ids, (uint8_t **)ooo_packet_ids);
+
 	int bytes_read = 1;
 
 	uint8_t client_id = 1;
@@ -311,7 +331,7 @@ int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, s
 		return -1;
 	}
 
-	if (recv_window_packets(outfd, sockfd, sockaddr, sockaddr_size, mss, last_packet_id_expected, (uint8_t **)&ooo_packet_ids, (off_t **)&ooo_packet_locations, &client_id) < 0) {
+	if (recv_window_packets(outfd, sockfd, sockaddr, sockaddr_size, mss, last_packet_id_expected, ooo_packet_ids, ooo_packet_locations, &client_id) < 0) {
 		fprintf(stderr, "myclient ~ send_recv_file(): initial packet recv failed\n");
 		return -1;
 	}
@@ -323,7 +343,7 @@ int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, s
 			return -1;
 		}
 
-		if (recv_window_packets(outfd, sockfd, sockaddr, sockaddr_size, mss, last_packet_id_expected, (uint8_t **)&ooo_packet_ids, (off_t **)&ooo_packet_locations, &client_id) < 0) {
+		if (recv_window_packets(outfd, sockfd, sockaddr, sockaddr_size, mss, last_packet_id_expected, ooo_packet_ids, ooo_packet_locations, &client_id) < 0) {
 			fprintf(stderr, "myclient ~ send_recv_file(): recv_window_packets() failed\n");
 			return -1;
 		}
@@ -346,7 +366,7 @@ int create_file_directory(const char *file_path) {
 	while (res != REG_NOMATCH) {
 		if ((res = regexec(&regex_, file_path + fs_idx, 1, &pmatch, 0)) < 0) {
 			fprintf(stderr, "myclient ~ create_file_directory(): regexec() failed\n");
-			exit(1);
+			return -1;
 		} else if (res != REG_NOMATCH) {
 			fs_idx += pmatch.rm_eo;
 
@@ -358,7 +378,7 @@ int create_file_directory(const char *file_path) {
 			if (stat(outfile_dir, &st) == -1) {
 				if (mkdir(outfile_dir, 0700) < 0) {
 					fprintf(stderr, "myclient ~ create_file_directory(): failed to make directory %s\n", outfile_dir);
-					exit(1);
+					return -1;
 				}
 			}
 		}

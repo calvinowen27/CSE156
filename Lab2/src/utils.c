@@ -118,13 +118,12 @@ int shift_file_contents(int fd, off_t start_idx, int amount) {
 
 	while (begin > start_idx) {
 		begin = lseek(fd, begin - amount, SEEK_SET);
-		printf(" = %lld\n", begin);
 
 		if (read_n_bytes(fd, buf, amount) < 0) {
 			fprintf(stderr, "shift_file_contents(): read_n_bytes() failed.\n");
 			return -1;
 		}
-		printf("writing '%s' at index %lld\n", buf, begin);
+
 		if (write_n_bytes(fd, buf, amount) < 0) {
 			fprintf(stderr, "shift_file_contents(): write_n_bytes failed.\n");
 			return -1;
