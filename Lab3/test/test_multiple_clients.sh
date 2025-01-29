@@ -7,17 +7,17 @@ echo "
 ./bin/myserver 9090 &
 server_pid=$!
 
-./bin/myclient 127.0.0.1 9090 4096 test_files/large_ascii.txt out/large_ascii_out1.txt &
+./bin/myclient 127.0.0.1 9090 4096 test_files/large_ascii.txt out/large_ascii_out.txt &
 client1_pid=$!
 
-./bin/myclient 127.0.0.1 9090 4096 test_files/large_ascii.txt out/large_ascii_out2.txt &
+./bin/myclient 127.0.0.1 9090 4096 test_files/small_ascii.txt out/small_ascii_out.txt &
 client2_pid=$!
 
 wait $client1_pid
 wait $client2_pid
 
-diff test_files/large_ascii.txt out/large_ascii_out1.txt > diff1
-diff test_files/large_ascii.txt out/large_ascii.out2.txt > diff2
+diff test_files/large_ascii.txt out/large_ascii_out.txt > diff1
+diff test_files/small_ascii.txt out/small_ascii_out.txt > diff2
 
 if [ ! -d out ]; then
 	echo "~~~~~~~~~~~~~~~~~~~~~~~
@@ -34,9 +34,9 @@ if [ ! -d out ]; then
 	exit 1
 fi
 
-if [ -s diff1 ] && [ -s diff2 ]; then
+if [ -s diff1 ] || [ -s diff2 ]; then
 	echo "~~~~~~~~~~~~~~~~~~~~~~~
-	TEST FAILURE: client didn't correctly replicate file
+	TEST FAILURE: at least one client failed to replicate file
 ~~~~~~~~~~~~~~~~~~~~~~~"
 	kill -9 $server_pid
 	wait $server_pid &>/dev/null
@@ -56,4 +56,4 @@ echo "~~~~~~~~~~~~~~~~~~~~~~~
 kill -9 $server_pid
 wait $server_pid &>/dev/null
 
-rm -rf out/ diff diff1 diff2
+rm -rf out/ diff1 diff2

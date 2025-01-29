@@ -81,34 +81,10 @@ int echo_data(int sockfd, struct sockaddr *sockaddr, socklen_t *sock_size) {
 	char buf[BUFFER_SIZE];
 	memset(buf, 0, sizeof(buf));
 
-	uint8_t next_client_id = 2, serving_client_id = 0;
-
-	int bytes_recvd, waiting_for_client = 1;
-	while ((bytes_recvd = recvfrom(sockfd, buf, BUFFER_SIZE, 0, sockaddr, sock_size)) >= 0) {
-		if ((uint8_t)buf[1] == serving_client_id) {
-			if (bytes_recvd > HEADER_SIZE) { // received good packet, echo back
-				if (sendto(sockfd, buf, BUFFER_SIZE, 0, sockaddr, *sock_size) < 0) {
-					fprintf(stderr, "myserver ~ main(): server failed to send packets back to client.\n");
-					break;
-				}
-			} else { // client terminated connection, serve next client
-				waiting_for_client = 1;
-				next_client_id = 2;
-			}
-		} else {
-			if (waiting_for_client) {
-				buf[1] = next_client_id;
-				serving_client_id = next_client_id;
-				waiting_for_client = 0;
-				next_client_id += 1;
-			} else {
-				buf[HEADER_SIZE] = 0;
-			}
-
-			if (sendto(sockfd, buf, BUFFER_SIZE, 0, sockaddr, *sock_size) < 0) {
-				fprintf(stderr, "myserver ~ main(): server failed to send packets back to client.\n");
-				break;
-			}
+	while (recvfrom(sockfd, buf, BUFFER_SIZE, 0, sockaddr, sock_size) >= 0) {
+		if (sendto(sockfd, buf, BUFFER_SIZE, 0, sockaddr, *sock_size) < 0) {
+			fprintf(stderr, "myserver ~ main(): server failed to send packets back to client.\n");
+			break;
 		}
 
 		memset(buf, 0, sizeof(buf));

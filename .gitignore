@@ -3,3 +3,4 @@ bin
 .vscode
 test_files
 .DS_STORE
+out
