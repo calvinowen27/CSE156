@@ -10,8 +10,10 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <regex.h>
+
 #include "myclient.h"
 #include "utils.h"
+#include "protocol.h"
 
 #define BUFFER_SIZE 4096
 #define HEADER_SIZE 2

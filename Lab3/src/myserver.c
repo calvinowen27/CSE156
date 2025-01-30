@@ -8,8 +8,10 @@
 #include <string.h>
 #include <regex.h>
 #include <arpa/inet.h>
+
 #include "myserver.h"
 #include "utils.h"
+#include "protocol.h"
 
 // #define IP_ADDR "127.0.0.1"
 #define BUFFER_SIZE 4096
