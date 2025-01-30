@@ -15,12 +15,16 @@
 
 // #define IP_ADDR "127.0.0.1"
 #define BUFFER_SIZE 65535
+#define START_CLIENTS 5
 
 struct client_info {
 	uint32_t id;
 	int outfd;
+	uint32_t max_sn;
 	uint32_t *ooo_pkt_sns;
 	off_t *ooo_file_idxs;
+	uint32_t ooo_pkt_count;
+	bool is_active;
 };
 
 int main(int argc, char **argv) {
@@ -48,7 +52,28 @@ int main(int argc, char **argv) {
 
 	char *pkt_buf = malloc(sizeof(char) * BUFFER_SIZE);
 
-	if (run(sockfd, (struct sockaddr *)&clientaddr, &clientaddr_size, pkt_buf) < 0) {
+	// initialize clients
+	struct client_info *clients = calloc(sizeof(struct client_info), START_CLIENTS);
+	uint16_t client_count = START_CLIENTS;
+	for (int i = 0; i < START_CLIENTS; i++) {
+		struct client_info client = clients[i];
+		client.is_active = false;
+		client.ooo_pkt_count = 256;
+		
+		client.ooo_pkt_sns = calloc(sizeof(uint32_t), client.ooo_pkt_count);
+		if (client.ooo_pkt_sns == NULL) {
+			fprintf(stderr, "myserver ~ main(): encountered an error initializing client ooo_pkt_sns.\n");
+			exit(1); // TODO: check exit codes
+		}
+
+		client.ooo_file_idxs = calloc(sizeof(off_t), client.ooo_pkt_count);
+		if (client.ooo_file_idxs == NULL) {
+			fprintf(stderr, "myserver ~ main(): encountered an error initializing client ooo_file_idxs.\n");
+			exit(1); // TODO: check exit codes
+		}
+	}
+
+	if (run(sockfd, (struct sockaddr *)&clientaddr, &clientaddr_size, pkt_buf, clients, &client_count) < 0) {
 		fprintf(stderr,"myserver ~ main(): server failed to receive from socket.\n");
 	}
 
@@ -60,7 +85,7 @@ int main(int argc, char **argv) {
 
 // run server: accept pkts and send acks for highest pkt sn from client during breaks
 // this function will run forever once called, or until there is an error (returns -1)
-int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sock_size, char *pkt_buf) {
+int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sock_size, char *pkt_buf, struct client_info *clients, uint32_t *client_count) {
 	// while res > 0
 	//		if select (data available)
 	//			res = recv_data()
@@ -75,7 +100,7 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sock_size, char *pkt_b
 
 	struct timeval timeout = { LOSS_TIMEOUT_SECS, 0 };
 
-	uint8_t expected_packet_id_recv = 1;
+	uint32_t next_client_id = 1;
 
 	int bytes_recvd, res = 1;
 
