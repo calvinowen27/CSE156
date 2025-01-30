@@ -14,7 +14,14 @@
 #include "protocol.h"
 
 // #define IP_ADDR "127.0.0.1"
-#define BUFFER_SIZE 4096
+#define BUFFER_SIZE 65535
+
+struct client_info {
+	uint32_t id;
+	int outfd;
+	uint32_t *ooo_pkt_sns;
+	off_t *ooo_file_idxs;
+};
 
 int main(int argc, char **argv) {
 	// handle command line args
@@ -39,38 +46,81 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 
-	char buf[BUFFER_SIZE + 1];
-	buf[BUFFER_SIZE] = 0;
+	char *pkt_buf = malloc(sizeof(char) * BUFFER_SIZE);
 
-	if (echo_data(sockfd, (struct sockaddr *)&clientaddr, &clientaddr_size) < 0) {
+	if (run(sockfd, (struct sockaddr *)&clientaddr, &clientaddr_size, pkt_buf) < 0) {
 		fprintf(stderr,"myserver ~ main(): server failed to receive from socket.\n");
 	}
 
+	free(pkt_buf);
 	close(sockfd);
 
 	return 0;
 }
 
-// receive data from sockfd and echo it back as it arrives back to the client
+// run server: accept pkts and send acks for highest pkt sn from client during breaks
 // this function will run forever once called, or until there is an error (returns -1)
-int echo_data(int sockfd, struct sockaddr *sockaddr, socklen_t *sock_size) {
-	char buf[BUFFER_SIZE];
-	memset(buf, 0, sizeof(buf));
+int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sock_size, char *pkt_buf) {
+	// while res > 0
+	//		if select (data available)
+	//			res = recv_data()
+	//			write data to file
+	//		else
+	//			send acks
+	//			reset sn maps (client id:highest sn)
 
-	while (recvfrom(sockfd, buf, BUFFER_SIZE, 0, sockaddr, sock_size) >= 0) {
-		if (sendto(sockfd, buf, BUFFER_SIZE, 0, sockaddr, *sock_size) < 0) {
-			fprintf(stderr, "myserver ~ main(): server failed to send packets back to client.\n");
-			break;
+	// configure fds and timeout for select() call
+	fd_set fds;
+	FD_SET(sockfd, &fds);
+
+	struct timeval timeout = { LOSS_TIMEOUT_SECS, 0 };
+
+	uint8_t expected_packet_id_recv = 1;
+
+	int bytes_recvd, res = 1;
+
+	while (res == 0) { // hopefully run forever
+		// reset timeout
+		timeout.tv_sec = LOSS_TIMEOUT_SECS;
+
+		if (select(sockfd + 1, &fds, NULL, NULL, &timeout) > 0) { // check there is data to be read from socket
+			// data available at socket
+			// read into buffer
+			if ((bytes_recvd = recvfrom(sockfd, pkt_buf, BUFFER_SIZE, 0, sockaddr, sock_size)) >= 0) {
+				int opcode = get_pkt_opcode(pkt_buf);
+				
+				switch (opcode) {
+					case OP_WR:
+						// open outfile and respond with next client id
+						break;
+					case OP_DATA:
+						// write to client:outfile pkt data, check ooo buffer to see if file idx stored
+						// if payload size == 0: terminate connection
+						break;
+					case OP_ERROR:
+						// terminate connection
+						break;
+					default:
+						// do nothing?
+						break;
+				}
+
+				memset(pkt_buf, 0, BUFFER_SIZE);
+			} else { // recvfrom() failure
+				fprintf(stderr, "myserver ~ run(): encountered error with recvfrom() call.\n");
+				return -1;
+			}
+		} else {
+			// send acks and reset id:sn maps
 		}
-
-		memset(buf, 0, sizeof(buf));
 	}
 
-	return -1;
+	fprintf(stderr, "myserver ~ run(): something went wrong. Closing server.\n");
+	return -1; // TODO: check if exit code is needed
 }
 
 // TODO: rework for server side (copied from myclient Lab2)
-void recv_data() {
+void parse_pkt() {
 	packet_id_recvd = (uint8_t)buf[0];
 	if (packet_id_recvd == expected_packet_id_recv) {
 		// write bytes to outfile
