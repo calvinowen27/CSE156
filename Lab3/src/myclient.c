@@ -1,6 +1,7 @@
 #include <sys/socket.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <unistd.h>
 #include <string.h>
 #include <netinet/in.h>
@@ -15,15 +16,11 @@
 #include "utils.h"
 #include "protocol.h"
 
-#define BUFFER_SIZE 4096
-#define HEADER_SIZE 2
-#define MIN_MSS_SIZE HEADER_SIZE + 1
-#define WINDOW_SIZE 100 // must be < 256 unless packet ID byte count increases
-#define TIMEOUT_SECS 60
+#define MIN_MSS_SIZE MAX_HEADER_SIZE + 1
 
 int main(int argc, char **argv) {
 	// handle command line args
-	if (argc != 6) {
+	if (argc != 7) {
 		printf("Invalid number of options provided.\nThis is where I will print the usage of the program.\n");
 		exit(1);
 	}
@@ -36,14 +33,16 @@ int main(int argc, char **argv) {
 	}
 
 	int mss = atoi(argv[3]);																// mss
-	if (mss < 0) {
-		printf("Invalid mss provided. Please provide a positive integer as the mss.\n");
+	// check for valid mss size
+	if (mss < MIN_MSS_SIZE) {
+		printf("Invalid mss provided. Please provide a positive integer greater than %d.\n", MIN_MSS_SIZE);
 		exit(1);
 	}
 
-	// check for valid mss size
-	if (mss < MIN_MSS_SIZE) {
-		printf("Required minimum mss is 5.\n");
+	int winsz = atoi(argv[4]);																// winsz
+	// check for valid winsz
+	if (winsz < 1) {
+		printf("Invalid winsz (window size) provided. Please prove a positive integer for winsz.\n");
 		exit(1);
 	}
 
@@ -60,7 +59,7 @@ int main(int argc, char **argv) {
 	int outfd;
 
 	if (create_file_directory(outfile_path) < 0) {
-		fprintf(stderr, "myclient ~ main(): failed to create outfile directories. Attempting to open file anyway.\n");
+		fprintf(stderr, "myclient ~ main(): failed to create outfile directories. Attempting to open outfile anyway.\n");
 		outfd = open(outfile_path, O_RDWR | O_CREAT | O_TRUNC, 0664);
 		if (outfd < 0) {
 			fprintf(stderr, "myclient ~ main(): failed to open/create outfile %s\n", outfile_path);
@@ -85,7 +84,7 @@ int main(int argc, char **argv) {
 	}
 
 	// send in file to server
-	if (send_recv_file(infd, outfd, sockfd, (struct sockaddr *)&serveraddr, serveraddr_size, mss) < 0) {
+	if (send_recv_file(infd, outfd, sockfd, (struct sockaddr *)&serveraddr, serveraddr_size, mss, winsz) < 0) {
 		fprintf(stderr, "myclient ~ main(): failed to send or receive file %s to server.\n", infile_path);
 		exit(1);
 	}
@@ -97,181 +96,100 @@ int main(int argc, char **argv) {
 	return 0;
 }
 
-int send_window_packets(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_size, int mss, int window_size, uint8_t client_id, uint8_t *last_packet_id_expected) {
-	char buf[mss+1];
-	memset(buf, 0, sizeof(buf));
+int send_window_packets(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_size, int mss, int winsz, uint32_t client_id, uint32_t start_pkt_sn) {
+	char pkt_buf[mss];
+	memset(pkt_buf, 0, sizeof(pkt_buf));
 
-	int bytes_read = 1, eof_reached = 0;
+	uint32_t bytes_read;
 
-	uint8_t packet_id_sent;
+	bool eof_reached = false;
 
-	// printf("sending packet window\n");
+	uint32_t pkt_sn_sent = start_pkt_sn;
+	int pkts_sent = 0;
 
-	for (packet_id_sent = 1; packet_id_sent <= window_size; packet_id_sent++) {
-		// printf("sending packet %u\n", packet_id_sent);
-		bytes_read = read(infd, buf+HEADER_SIZE, mss-HEADER_SIZE);
-		// printf("made it past read\n");
+	while (pkts_sent < winsz) { // only send max winsz packets
+		// bytes_read is our payload size
+		bytes_read = (uint32_t)read(infd, pkt_buf + DATA_HEADER_SIZE, mss - DATA_HEADER_SIZE);
+		
 		if (bytes_read < 0) {
 			fprintf(stderr, "myclient ~ send_recv_file(): encountered an error reading from infile.\n");
 			return -1;
 		} else if (bytes_read == 0) {
-			buf[HEADER_SIZE] = 0;
-			eof_reached = 1;
+			eof_reached = true;
 		}
 		
-		// assign packet ID
-		buf[0] = packet_id_sent;
+		// assign opcode
+		assign_pkt_opcode(pkt_buf, OP_DATA);
 
 		// assign client ID
-		buf[1] = client_id;
+		assign_pkt_client_id(pkt_buf, client_id);
 
-		buf[HEADER_SIZE+mss] = 0;
+		// assign packet sequence num
+		assign_pkt_sn(pkt_buf, pkt_sn_sent);
 
-		if (sendto(sockfd, buf, bytes_read+HEADER_SIZE, 0, sockaddr, sockaddr_size) < 0) {
+		// assign payload size
+		assign_pkt_pyld_sz(pkt_buf, bytes_read);
+
+		if (sendto(sockfd, pkt_buf, DATA_HEADER_SIZE + bytes_read, 0, sockaddr, sockaddr_size) < 0) {
 			fprintf(stderr, "myclient ~ send_recv_file(): client failed to send packet to server.\n");
 			return -1;
 		}
 
+		pkt_sn_sent++;
+		if (pkt_sn_sent == 0) pkt_sn_sent = 1; // account for overflow (wrap back to 1, 0 not allowed)
+
+		pkts_sent++;
+
+		memset(pkt_buf, 0, sizeof(pkt_buf));
+
 		if (eof_reached) {
 			break; // finished reading file, now just wait to receive rest of packets
 		}
-
-		*last_packet_id_expected = packet_id_sent;
-
-		memset(buf, 0, sizeof(buf));
 	}
 
-	return bytes_read;
+	return pkts_sent;
 }
 
-int recv_window_packets(int outfd, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_size, int mss, uint8_t last_packet_id_expected, uint8_t *ooo_packet_ids, off_t *ooo_packet_locations, uint8_t *client_id) {
-	char buf[mss+1];
-	memset(buf, 0, sizeof(buf));
+int recv_server_response(int outfd, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_size, uint32_t *ack_pkt_sn) {
+	char pkt_buf[MAX_SRVR_RES_SIZE];
+	memset(pkt_buf, 0, sizeof(pkt_buf));
 
-	uint8_t packet_id_recvd;
-
+	// configure fds and timeout for select() call
 	fd_set fds;
 	FD_SET(sockfd, &fds);
 
 	struct timeval timeout = { TIMEOUT_SECS, 0 };
-	// timeout.tv_sec = TIMEOUT_SECS; // 60s timeout for recvfrom server
 
-	int num_packets_not_recvd = 0; // number of packets still out (data in use in above arrays)
-	int bytes_recvd, num_packets_recvd = 0;
+	int bytes_recvd;
 
 	uint8_t expected_packet_id_recv = 1;
 
-	while (num_packets_recvd < last_packet_id_expected) {
-		int res;
-		timeout.tv_sec = TIMEOUT_SECS;
-		if ((res = select(sockfd + 1, &fds, NULL, NULL, &timeout)) > 0) { // check there is data to be read from socket
-			if ((bytes_recvd = recvfrom(sockfd, buf, mss, 0, sockaddr, &sockaddr_size)) < 0) {
-				fprintf(stderr, "myclient ~ send_recv_file(): an error occured while receiving data from server.\n");
-				fprintf(stderr, "%s\n", strerror(errno));
-				return -1;
-			} else { // recvfrom succeeds
-				if (bytes_recvd == HEADER_SIZE) {
-					fprintf(stderr, "myclient ~ send_recv_file(): Connection refused by server (server is serving another client right now).\n");
-					return -1;
-				}
-				// get client ID from server response to first packet
-				if (*client_id != (uint8_t)buf[1]) {
-					if (*client_id == 1) {
-						*client_id = (uint8_t)buf[1];
-					} else {
-						continue; // packet was not intended for me
-					}
-				}
-
-				packet_id_recvd = (uint8_t)buf[0];
-				if (packet_id_recvd == expected_packet_id_recv) {
-					// write bytes to outfile
-					if (write_n_bytes(outfd, buf+HEADER_SIZE, strlen(buf+HEADER_SIZE)) < 0) {
-						fprintf(stderr, "myclient ~ send_recv_file(): encountered error writing bytes to outfile\n");
-						fprintf(stderr, "%s\n", strerror(errno));
-						return -1;
-					}
-
-					// normal, increment expected packet ID
-					expected_packet_id_recv = packet_id_recvd + 1;
-				} else if (packet_id_recvd > expected_packet_id_recv) { // packet recvd too soon
-					// store all packets in between recvd and expected into ooo buffer with file locations
-					for (uint8_t id = expected_packet_id_recv; id < packet_id_recvd; id++) {
-						ooo_packet_ids[num_packets_not_recvd] = id;
-						ooo_packet_locations[num_packets_not_recvd] = lseek(outfd, 0, SEEK_END);
-						num_packets_not_recvd += 1;
-					}
-
-					// write bytes to outfile
-					if (write_n_bytes(outfd, buf+HEADER_SIZE, strlen(buf+HEADER_SIZE)) < 0) {
-						fprintf(stderr, "myclient ~ send_recv_file(): encountered error writing bytes to outfile\n");
-						fprintf(stderr, "%s\n", strerror(errno));
-						return -1;
-					}
-
-					// increment expected packet ID
-					expected_packet_id_recv = packet_id_recvd + 1;
-				} else { // packet recvd late
-					// write packet data to file depending on ooo buffer file location
-					// pop packet data from ooo buffers
-					// change all ooo packet file locations with larger ID to current position of seek ptr
-					for (int i = 0; i < num_packets_not_recvd; i++) {
-						if (ooo_packet_ids[i] == packet_id_recvd) {
-							// go to correct location in outfile
-							off_t file_idx = lseek(outfd, ooo_packet_locations[i], SEEK_SET);
-
-							if (shift_file_contents(outfd, file_idx, strlen(buf+HEADER_SIZE)) < 0) {
-								fprintf(stderr, "myclient ~ send_recv_file(): encountered error shifting file contents for OOO write.\n");
-								return -1;
-							}
-
-							// write bytes to outfile
-							if (write_n_bytes(outfd, buf+HEADER_SIZE, strlen(buf+HEADER_SIZE)) < 0) {
-								fprintf(stderr, "myclient ~ send_recv_file(): encountered error writing bytes to outfile\n");
-								fprintf(stderr, "%s\n", strerror(errno));
-								return -1;
-							}
-							
-							// shift packet info down in buffer
-							if (i < num_packets_not_recvd - 1) {
-								ooo_packet_ids[i] = ooo_packet_ids[i+1];
-								ooo_packet_locations[i] = lseek(outfd, 0, SEEK_CUR);
-							} else {
-								ooo_packet_ids[i] = 0;
-								ooo_packet_locations[i] = 0;
-							}
-						} else if (ooo_packet_ids[i] > packet_id_recvd) {
-							// shift packet info down in buffer
-							if (i < num_packets_not_recvd - 1) {
-								ooo_packet_ids[i] = ooo_packet_ids[i+1];
-								ooo_packet_locations[i] = lseek(outfd, 0, SEEK_CUR);
-							} else {
-								ooo_packet_ids[i] = 0;
-								ooo_packet_locations[i] = 0;
-								num_packets_not_recvd -= 1;
-							}
-						}
-					}
-					
-					lseek(outfd, 0, SEEK_END); // reset seek ptr in case more packets come in
-
-					// expected not recvd yet, leave value the same
-				}
-			}
-		} else { // after 60s timeout
-			// if haven't received more packets than ooo packets, can't detect server
-			// otherwise we've timed out waiting for a dropped packet
-			if (last_packet_id_expected - num_packets_recvd > num_packets_not_recvd) {
-				fprintf(stderr, "Cannot detect server.\n");
+	if (select(sockfd + 1, &fds, NULL, NULL, &timeout) > 0) { // check there is data to be read from socket
+		if ((bytes_recvd = recvfrom(sockfd, pkt_buf, sizeof(pkt_buf), 0, sockaddr, &sockaddr_size)) >= 0) {
+			// recvfrom success
+			int opcode = get_pkt_opcode(pkt_buf);
+			if (opcode == OP_ACK) {
+				*ack_pkt_sn = get_pkt_sn(pkt_buf);	// assign pkt sn to ack_pkt_sn
+			} else if (opcode == OP_ERROR) {
+				// TODO: idk how this is supposed to be handled tbh so make sure it's right
+				fprintf(stderr, "myclient ~ recv_server_response(): received error from server, exiting.\n");
+				exit(1);
 			} else {
-				fprintf(stderr, "Packet loss detected.\n");
+				// TODO: make sure this is implemented correctly too
+				fprintf(stderr, "myclient ~ recv_server_response(): unrecognized opcode received from server: %d.\n", opcode);
+				return -1;
 			}
+			
+		} else { // recvfrom failed
+			fprintf(stderr, "myclient ~ recv_server_response(): an error occured while receiving data from server.\n");
+			fprintf(stderr, "%s\n", strerror(errno));
 			return -1;
 		}
-
-		num_packets_recvd += 1;
-
-		memset(buf, 0, sizeof(buf));
+	} else { // after timeout
+		// TODO: retransmit pkt window since we didn't hear back from the server
+		//		also make sure to update the error message V V V
+		fprintf(stderr, "myclient ~ recv_server_response(): no server response. Here we should resend pkt window (not implemented).\n");
+		return -1;
 	}
 
 	return 0;
@@ -279,7 +197,7 @@ int recv_window_packets(int outfd, int sockfd, struct sockaddr *sockaddr, sockle
 
 // send file from fd to sockfd, also using sockaddr
 // return 0 on success, -1 on error
-int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_size, int mss) {
+int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_size, int mss, int winsz) {
 	
 	/*
 			- allocate pairs of packets received to place in file (if OOO)
@@ -292,9 +210,9 @@ int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, s
 				  then update OOO file location for any subsequent packets waiting to be received
 	 */
 
-	uint8_t ooo_packet_ids[WINDOW_SIZE];
-	off_t ooo_packet_locations[WINDOW_SIZE];
-	for (int i = 0; i < WINDOW_SIZE; i++) {
+	uint8_t ooo_packet_ids[winsz];
+	off_t ooo_packet_locations[winsz];
+	for (int i = 0; i < winsz; i++) {
 		ooo_packet_ids[i] = 0;
 		ooo_packet_locations[i] = 0;
 	}
@@ -319,7 +237,7 @@ int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, s
 	}
 
 	while (bytes_read > 0) { // continue until no more bytes read from file
-		bytes_read = send_window_packets(infd, sockfd, sockaddr, sockaddr_size, mss, WINDOW_SIZE, client_id, &last_packet_id_expected);
+		bytes_read = send_window_packets(infd, sockfd, sockaddr, sockaddr_size, mss, winsz, client_id, &last_packet_id_expected);
 		if (bytes_read < 0) {
 			fprintf(stderr, "myclient ~ send_recv_file(): send_window_packets() failed\n");
 			return -1;
@@ -334,6 +252,8 @@ int send_recv_file(int infd, int outfd, int sockfd, struct sockaddr *sockaddr, s
 	return 0;
 }
 
+// create all directories in file path (if they don't exist)
+// return 0 on success, -1 on error
 int create_file_directory(const char *file_path) {
 	// regex for matching last / in filepath
 	regex_t regex_;

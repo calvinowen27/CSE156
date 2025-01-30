@@ -8,6 +8,7 @@ struct sockaddr_in;
 void logerr(const char *);
 
 // split uint32_t into uint8_t[4]
+// must free pointer when done using it
 uint8_t *split_bytes(uint32_t val);
 
 // reuinite uint8_t[4] into uin32_t
@@ -30,5 +31,28 @@ int shift_file_contents(int fd, off_t start_idx, int amount);
 // initialize socket with ip address and port, and return the file descriptor for the socket
 // returns -1 on failure
 int init_socket(struct sockaddr_in *sockaddr, const char *ip_addr, int port, int domain, int type, int protocol, bool do_bind);
+
+// assign opcode to first byte of pkt_buf
+// return 0 on success, -1 on error
+int assign_pkt_opcode(char *pkt_buf, int opcode);
+
+// assign client_id to header bytes of pkt_buf
+// return 0 on success, -1 on error
+int assign_pkt_client_id(char *pkt_buf, uint32_t client_id);
+
+// assign pkt_sn to header bytes of pkt_buf
+// return 0 on success, -1 on error
+int assign_pkt_sn(char *pkt_buf, uint32_t pkt_sn);
+
+// assign pyld_sz to header bytes of pkt_buf
+// return 0 on success, -1 on error
+int assign_pkt_pyld_sz(char *pkt_buf, uint32_t pyld_sz);
+
+// returns opcode of pkt_buf, -1 on error
+int get_pkt_opcode(char *pkt_buf);
+
+// returns pkt sn of pkt_buf, 0 on error
+// can be used to get client ID from server, server assigns pkt_sn field to client ID when accepting handshake
+uint32_t get_pkt_sn(char *pkt_buf);
 
 #endif

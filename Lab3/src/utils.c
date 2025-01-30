@@ -9,13 +9,16 @@
 #include <stdbool.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+
 #include "utils.h"
+#include "protocol.h"
 
 void logerr(const char *err) {
 	fprintf(stderr, "%s\n", err);
 }
 
 // split uint32_t into uint8_t[4]
+// must free pointer when done using it
 uint8_t *split_bytes(uint32_t val) {
 	uint8_t *res = calloc(4, sizeof(uint8_t *));
 
@@ -166,4 +169,131 @@ int init_socket(struct sockaddr_in *sockaddr, const char *ip_addr, int port, int
 	}
 
 	return sockfd;
+}
+
+// assign opcode to first byte of pkt_buf
+// return 0 on success, -1 on error
+int assign_pkt_opcode(char *pkt_buf, int opcode) {
+	pkt_buf[0] = (uint8_t)opcode;
+	return 0;
+}
+
+// assign client_id to header bytes of pkt_buf
+// return 0 on success, -1 on error
+int assign_pkt_client_id(char *pkt_buf, uint32_t client_id) {
+	if (pkt_buf == NULL) {
+		fprintf(stderr, "utils ~ assign_pkt_client_id(): cannot pass NULL ptr to pkt_buf.\n");
+		return -1;
+	}
+
+	uint8_t *bytes = split_bytes(client_id);
+
+	if (bytes == NULL) {
+		fprintf(stderr, "utils ~ assign_pkt_client_id(): something went wrong when splitting bytes of client_id.\n");
+		return -1;
+	}
+	
+	// client_id goes right after opcode (1)
+	pkt_buf[1] = bytes[0];
+	pkt_buf[2] = bytes[1];
+	pkt_buf[3] = bytes[2];
+	pkt_buf[4] = bytes[3];
+
+	free(bytes);
+
+	return 0;
+}
+
+// assign pkt_sn to header bytes of pkt_buf
+// return 0 on success, -1 on error
+int assign_pkt_sn(char *pkt_buf, uint32_t pkt_sn) {
+	if (pkt_buf == NULL) {
+		fprintf(stderr, "utils ~ assign_pkt_sn(): cannot pass NULL ptr to pkt_buf.\n");
+		return -1;
+	}
+
+	uint8_t *bytes = split_bytes(pkt_sn);
+
+	if (bytes == NULL) {
+		fprintf(stderr, "utils ~ assign_pkt_sn(): something went wrong when splitting bytes of pkt_sn.\n");
+		return -1;
+	}
+	
+	// pkt_sn goes right after client id (5)
+	pkt_buf[5] = bytes[0];
+	pkt_buf[6] = bytes[1];
+	pkt_buf[7] = bytes[2];
+	pkt_buf[8] = bytes[3];
+
+	free(bytes);
+
+	return 0;
+}
+
+// assign pyld_sz to header bytes of pkt_buf
+// return 0 on success, -1 on error
+int assign_pkt_pyld_sz(char *pkt_buf, uint32_t pyld_sz) {
+	if (pkt_buf == NULL) {
+		fprintf(stderr, "utils ~ assign_pkt_pyld_sz(): cannot pass NULL ptr to pkt_buf.\n");
+		return -1;
+	}
+
+	uint8_t *bytes = split_bytes(pyld_sz);
+
+	if (bytes == NULL) {
+		fprintf(stderr, "utils ~ assign_pkt_pyld_sz(): something went wrong when splitting bytes of pyld_sz.\n");
+		return -1;
+	}
+	
+	// pyld_sz goes right after pkt sn (9)
+	pkt_buf[9] = bytes[0];
+	pkt_buf[10] = bytes[1];
+	pkt_buf[11] = bytes[2];
+	pkt_buf[12] = bytes[3];
+
+	free(bytes);
+
+	return 0;
+}
+
+// returns opcode of pkt_buf, -1 on error
+int get_pkt_opcode(char *pkt_buf) {
+	if (pkt_buf == NULL) {
+		fprintf(stderr, "utils ~ get_pkt_opcode(): cannot pass NULL ptr to pkt_buf.\n");
+		return -1;
+	}
+
+	return (int)pkt_buf[0];
+}
+
+// returns pkt sn of pkt_buf, 0 on error
+// can be used to get client ID from server, server assigns pkt_sn field to client ID when accepting handshake
+uint32_t get_pkt_sn(char *pkt_buf) {
+	if (pkt_buf == NULL) {
+		fprintf(stderr, "utils ~ get_pkt_sn(): cannot pass NULL ptr to pkt_buf.\n");
+		return 0;
+	}
+
+	uint32_t res;
+
+	// pkt_sn occurs right after opcode for ack, not at all for error
+	// check opcode for ack, otherwise return 0
+	if ((int)pkt_buf[0] == OP_ACK) {
+		uint8_t bytes[4];
+		bytes[0] = pkt_buf[1];
+		bytes[1] = pkt_buf[2];
+		bytes[2] = pkt_buf[3];
+		bytes[3] = pkt_buf[4];
+		
+		res = reunite_bytes(bytes);
+		if (res < 0) {
+			fprintf(stderr, "utils ~ get_pkt_sn(): something went wrong while reuniting bytes of pkt sn.\n");
+			return 0;
+		}
+	} else {
+		fprintf(stderr, "utils ~ get_pkt_sn(): pkt_buf does not contain valid opcode to get a sequence number.\n");
+		return 0;
+	}
+
+	return res;
 }
