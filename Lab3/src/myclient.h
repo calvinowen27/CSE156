@@ -1,7 +1,7 @@
 #ifndef MYCLIENT_INCLUDE
 #define MYCLIENT_INCLUDE
 
-struct pkt_idx_pair;
+struct pkt_ack_info;
 
 // send file from fd to sockfd, also using sockaddr
 // return 0 on success, -1 on error
@@ -14,7 +14,7 @@ int perform_handshake(int sockfd, const char *outfile_path, struct sockaddr *soc
 
 // send window of pkts with content from infd
 // returns number of pkts sent, -1 on error
-int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_size, int mss, int winsz, uint32_t client_id, uint32_t start_pkt_sn, struct pkt_idx_pair *pkt_idx_pairs);
+int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_size, int mss, int winsz, uint32_t client_id, uint32_t start_pkt_sn, struct pkt_ack_info *pkt_idx_pairs);
 
 // wait for server response, ack_pkt_sn is output
 // return 0 on success, -1 on error

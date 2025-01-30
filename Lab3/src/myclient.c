@@ -18,10 +18,11 @@
 
 #define MIN_MSS_SIZE MAX_HEADER_SIZE + 1
 
-struct pkt_idx_pair {
+struct pkt_ack_info {
 	uint32_t pkt_sn;
 	off_t file_idx;
 	bool ackd;
+	int retransmits;
 };
 
 int main(int argc, char **argv) {
@@ -112,15 +113,15 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 	// send pkts from ack sn + 1
 	uint32_t pkts_sent;
 
-	struct pkt_idx_pair pkt_idx_pairs[winsz];
+	struct pkt_ack_info pkt_info[winsz];
 	for (int i = 0; i < winsz; i++) {
-		pkt_idx_pairs[i].ackd = true;
+		pkt_info[i].ackd = true;
 	}
 
 	// continue while eof hasn't been reached or pkts need to be resent
 	while (!reached_eof || need_pkt_resend) {
 		// send pkt window
-		if ((pkts_sent = send_window_pkts(infd, sockfd, sockaddr, sockaddr_size, mss, winsz, client_id, start_pkt_sn, pkt_idx_pairs)) < 0) {
+		if ((pkts_sent = send_window_pkts(infd, sockfd, sockaddr, sockaddr_size, mss, winsz, client_id, start_pkt_sn, pkt_info)) < 0) {
 			fprintf(stderr, "myclient ~ send_file(): encountered an error while sending pkt window.\n");
 			return -1;
 		}
@@ -133,11 +134,16 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 			return -1;
 		}
 	
-		// update pkt/file idx pairs with ack
+		// update pkt info with ack
 		for (int i = 0; i < winsz; i++) {
-			struct pkt_idx_pair pair = pkt_idx_pairs[i];
-			if (pair.pkt_sn >= start_pkt_sn && pair.pkt_sn <= ack_pkt_sn) {
-				pair.ackd = true;
+			struct pkt_ack_info pkt = pkt_info[i];
+			if (pkt.pkt_sn >= start_pkt_sn && pkt.pkt_sn <= ack_pkt_sn) {
+				pkt.ackd = true;
+			} else {
+				if (pkt.retransmits >= 3) {
+					fprintf(stderr, "myclient ~ send_file(): exceeded 3 retransmits for a single packet.\n");
+					exit(1); // TODO: make sure this is the right exit code for failure/too many retransmissions
+				}
 			}
 		}
 
@@ -176,7 +182,7 @@ int perform_handshake(int sockfd, const char *outfile_path, struct sockaddr *soc
 
 // send window of pkts with content from infd
 // returns number of pkts sent, -1 on error
-int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_size, int mss, int winsz, uint32_t client_id, uint32_t start_pkt_sn, struct pkt_idx_pair *pkt_idx_pairs) {
+int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_size, int mss, int winsz, uint32_t client_id, uint32_t start_pkt_sn, struct pkt_ack_info *pkt_info) {
 	char pkt_buf[mss];
 	memset(pkt_buf, 0, sizeof(pkt_buf));
 
@@ -187,31 +193,31 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 	uint32_t pkt_sn = start_pkt_sn;
 	int pkts_sent = 0;
 
-	// TODO: keep track of file idx per pkt, for resend
-
-	int free_pair_idx;
+	int free_info_idx;
 	bool pkt_found = false;
 	while (pkts_sent < winsz) { // only send max winsz packets
-		// update pairs
-		free_pair_idx = -1;
+		// update info
+		free_info_idx = -1;
 		for (int i = 0; i < winsz; i++) {
-			struct pkt_idx_pair pair = pkt_idx_pairs[i];
-			if (pair.pkt_sn == pkt_sn) {
-				// seek file idx of pair
-				lseek(infd, pair.file_idx, SEEK_SET);
+			struct pkt_ack_info pkt = pkt_info[i];
+			if (pkt.pkt_sn == pkt_sn) {
+				// seek file idx of pkt
+				lseek(infd, pkt.file_idx, SEEK_SET);
 				pkt_found = true;
+				pkt.retransmits++;
 				break;
-			} else if (free_pair_idx == -1 && pair.ackd) { // find first ackd (not needed) pair
-				free_pair_idx = i;
+			} else if (free_info_idx == -1 && pkt.ackd) { // find first ackd (not needed) pkt
+				free_info_idx = i;
 			}
 		}
 
-		// if pkt sn not found, add at free_pair_idx
-		if (!pkt_found && free_pair_idx != -1) {
-			struct pkt_idx_pair pair = pkt_idx_pairs[free_pair_idx];
-			pair.pkt_sn = pkt_sn;
-			pair.ackd = false;
-			pair.file_idx = lseek(infd, 0, SEEK_CUR);
+		// if pkt sn not found, add at free_info_idx
+		if (!pkt_found && free_info_idx != -1) {
+			struct pkt_ack_info pkt = pkt_info[free_info_idx];
+			pkt.pkt_sn = pkt_sn;
+			pkt.ackd = false;
+			pkt.file_idx = lseek(infd, 0, SEEK_CUR);
+			pkt.retransmits = 0;
 		}
 
 		// bytes_read is our payload size
@@ -296,7 +302,7 @@ int recv_server_response(int sockfd, struct sockaddr *sockaddr, socklen_t sockad
 			return -1;
 		}
 	} else { // after timeout
-		// TODO: retransmit pkt window since we didn't hear back from the server
+		// TODO: retransmit pkt window since we didn't hear back from the server, keep track of retransmits per pkt
 		//		also make sure to update the error message V V V
 		fprintf(stderr, "myclient ~ recv_server_response(): no server response. Here we should resend pkt window (not implemented).\n");
 		return -1;
