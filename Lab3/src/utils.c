@@ -1,11 +1,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <stdbool.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
+#include <stdbool.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include "utils.h"
 
 void logerr(const char *err) {
@@ -133,4 +136,34 @@ int shift_file_contents(int fd, off_t start_idx, int amount) {
 	lseek(fd, prev_seek, SEEK_SET);
 
 	return 0;
+}
+
+// initialize socket with ip address and port, and return the file descriptor for the socket
+// returns -1 on failure
+int init_socket(struct sockaddr_in *sockaddr, const char *ip_addr, int port, int domain, int type, int protocol, bool do_bind) {
+	// initialize socket fd
+	int sockfd = socket(domain, type, protocol);
+	if (sockfd < 0) {
+		fprintf(stderr, "utils ~ init_socket(): failed to initialize socket\n");
+		return -1;
+	}
+
+	// init socket address struct with ip and port
+	sockaddr->sin_family = domain; // IPv4
+	sockaddr->sin_port = htons(port); // convert port endianness
+
+	if (ip_addr == NULL) {
+		sockaddr->sin_addr.s_addr = INADDR_ANY;
+	} else if (inet_pton(domain, ip_addr, &(sockaddr->sin_addr.s_addr)) < 0) {
+		fprintf(stderr, "utils ~ init_socket(): invalid ip address provided\n");
+		return -1;
+	}
+
+	// bind socket
+	if (do_bind && bind(sockfd, (struct sockaddr *)sockaddr, sizeof(*sockaddr)) < 0) {
+		fprintf(stderr, "utils ~ init_socket(): failed to bind socket: %s\n", strerror(errno));
+		return -1;
+	}
+
+	return sockfd;
 }

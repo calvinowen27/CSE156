@@ -32,7 +32,7 @@ int main(int argc, char **argv) {
 	struct sockaddr_in serveraddr, clientaddr;
 	socklen_t clientaddr_size = sizeof(clientaddr);
 
-	int sockfd = init_socket(&serveraddr, port);
+	int sockfd = init_socket(&serveraddr, NULL, port, AF_INET, SOCK_DGRAM, IPPROTO_UDP, true);
 	if (sockfd < 0) {
 		fprintf(stderr, "myserver ~ main(): server init_socket() failed.\n");
 		exit(1);
@@ -48,31 +48,6 @@ int main(int argc, char **argv) {
 	close(sockfd);
 
 	return 0;
-}
-
-// initialize socket with ip address and port, and return the file descriptor for the socket
-// returns -1 on failure
-int init_socket(struct sockaddr_in *sockaddr, int port) {
-	// initialize socket fd
-	int sockfd = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
-	if (sockfd < 0) {
-		fprintf(stderr, "myserver ~ init_socket(): failed to initialize socket\n");
-		return -1;
-	}
-
-	// init socket address struct with ip and port
-	sockaddr->sin_family = AF_INET; // IPv4
-	sockaddr->sin_port = htons(port); // convert port endianness
-	sockaddr->sin_addr.s_addr = INADDR_ANY;
-
-	// bind socket
-	if (bind(sockfd, (struct sockaddr *)sockaddr, sizeof(*sockaddr)) < 0) {
-		fprintf(stderr, "myserver ~ init_socket(): failed to bind socket\n");
-		fprintf(stderr, "%s\n", strerror(errno));
-		return -1;
-	}
-
-	return sockfd;
 }
 
 // receive data from sockfd and echo it back as it arrives back to the client

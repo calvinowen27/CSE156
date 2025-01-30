@@ -76,7 +76,7 @@ int main(int argc, char **argv) {
 	// initialize socket
 	struct sockaddr_in serveraddr;
 	socklen_t serveraddr_size = sizeof(serveraddr);
-	int sockfd = init_socket(&serveraddr, server_ip, server_port);
+	int sockfd = init_socket(&serveraddr, server_ip, server_port, AF_INET, SOCK_DGRAM, IPPROTO_UDP, false);
 	if (sockfd < 0) {
 		fprintf(stderr, "myclient ~ main(): failed to initialize socket.\n");
 		exit(1);
@@ -93,26 +93,6 @@ int main(int argc, char **argv) {
 	close(outfd);
 
 	return 0;
-}
-
-// initialize socket with ip address and port, and return the file descriptor for the socket
-// returns -1 on failure
-int init_socket(struct sockaddr_in *sockaddr, const char *ip_addr, int port) {
-	int sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-	if (sockfd < 0) {
-		fprintf(stderr, "myclient ~ init_socket(): client failed to initialize socket.\n");
-		return -1;
-	}
-
-	sockaddr->sin_family = AF_INET;
-	sockaddr->sin_port = htons(port);
-	// sockaddr->sin_addr.s_addr = inet_addr(ip_addr);
-	if (inet_pton(AF_INET, ip_addr, &(sockaddr->sin_addr.s_addr)) < 0) {
-		fprintf(stderr, "myclient ~ init_socket(): invalid ip address provided\n");
-		return -1;
-	}
-
-	return sockfd;
 }
 
 int send_window_packets(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_size, int mss, int window_size, uint8_t client_id, uint8_t *last_packet_id_expected) {

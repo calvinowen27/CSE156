@@ -1,3 +1,10 @@
+#ifndef UTILS_INCLUDE
+#define UTILS_INCLUDE
+
+#include <stdbool.h>
+
+struct sockaddr_in;
+
 void logerr(const char *);
 
 // split uint32_t into uint8_t[4]
@@ -19,3 +26,9 @@ int write_n_bytes(int sockfd, char *buf, int n);
 int pass_n_bytes(int infd, int outfd, int n);
 
 int shift_file_contents(int fd, off_t start_idx, int amount);
+
+// initialize socket with ip address and port, and return the file descriptor for the socket
+// returns -1 on failure
+int init_socket(struct sockaddr_in *sockaddr, const char *ip_addr, int port, int domain, int type, int protocol, bool do_bind);
+
+#endif
