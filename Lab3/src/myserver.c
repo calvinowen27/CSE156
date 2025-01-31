@@ -61,7 +61,7 @@ int main(int argc, char **argv) {
 
 // run server: accept pkts and send acks for highest pkt sn from client during breaks
 // this function will run forever once called, or until there is an error (returns -1)
-int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sock_size) {
+int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size) {
 	// while res > 0
 	//		if select (data available)
 	//			res = recv_data()
@@ -76,7 +76,7 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sock_size) {
 	uint32_t max_client_count = START_CLIENTS;
 
 	// initialize clients
-	struct client_info *clients = init_clients(START_CLIENTS);
+	struct client_info *clients = init_clients(max_client_count);
 	if (clients == NULL) {
 		fprintf(stderr, "myserver ~ run(): encountered error initializing clients.\n");
 		return -1;
@@ -100,11 +100,17 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sock_size) {
 		if (select(sockfd + 1, &fds, NULL, NULL, &timeout) > 0) { // check there is data to be read from socket
 			// data available at socket
 			// read into buffer
-			if ((bytes_recvd = recvfrom(sockfd, pkt_buf, BUFFER_SIZE, 0, sockaddr, sock_size)) >= 0) {
+			if ((bytes_recvd = recvfrom(sockfd, pkt_buf, BUFFER_SIZE, 0, sockaddr, sockaddr_size)) >= 0) {
 				int opcode = get_pkt_opcode(pkt_buf);
 				
 				switch (opcode) {
 					case OP_WR:
+						if (process_write_req(sockfd, sockaddr, sockaddr_size, pkt_buf, &clients, &max_client_count, next_client_id) < 0) {
+							fprintf(stderr, "myserver ~ run(): encountered error processing write request.\n");
+							return -1;
+						}
+
+						next_client_id++;
 						break;
 					case OP_DATA:
 						// write to client:outfile pkt data, check ooo buffer to see if file idx stored
@@ -140,7 +146,7 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sock_size) {
 	return -1; // TODO: check if exit code is needed
 }
 
-int process_write_req(int sockfd, char *pkt_buf, struct client_info **clients, uint32_t *max_client_count, uint32_t client_id) {
+int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, char *pkt_buf, struct client_info **clients, uint32_t *max_client_count, uint32_t client_id) {
 	if (clients == NULL || *clients == NULL) {
 		fprintf(stderr, "myserver ~ process_write_req(): invalid ptr passed to clients parameter.\n");
 		return -1;
@@ -155,7 +161,34 @@ int process_write_req(int sockfd, char *pkt_buf, struct client_info **clients, u
 	const char *outfile_path = calloc(strlen(pkt_buf + 1) + 1, sizeof(char));
 	memcpy(outfile_path, pkt_buf + 1, strlen(pkt_buf + 1));
 
-	if (accept_client(clients, max_client_count, client_id, outfile_path))
+	// accept client, initializing all client_info data and opening outfile for writing
+	if (accept_client(clients, max_client_count, client_id, outfile_path) < 0) {
+		fprintf(stderr, "myserver ~ process_write_req(): encountered error while accepting client %llu.\n", client_id);
+		return -1;
+	}
+
+	// create response buffer with ACK opcode and client_id in rest of bytes
+	char res_buf[1 + CID_BYTES];
+	res_buf[0] = OP_ACK;
+
+	uint8_t *cid_bytes = split_bytes(client_id);
+	if (cid_bytes == NULL) {
+		fprintf(stderr, "myserver ~ process_write_req(): something went wrong splitting client_id bytes.\n");
+		return -1;
+	}
+
+	res_buf[1] = cid_bytes[0];
+	res_buf[2] = cid_bytes[1];
+	res_buf[3] = cid_bytes[2];
+	res_buf[4] = cid_bytes[3];
+
+	free(cid_bytes);
+
+	// send ack with client id back to client
+	if (sendto(sockfd, res_buf, sizeof(res_buf), 0, sockaddr, sockaddr_size) < 0) {
+		fprintf(stderr, "myserver ~ process_write_req(): failed to send connection acceptance pkt to client.\n");
+		return -1;
+	}
 
 	return 0;
 }

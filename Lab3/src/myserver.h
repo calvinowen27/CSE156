@@ -8,9 +8,11 @@ struct client_info;
 
 // receive data from sockfd and echo it back as it arrives back to the client
 // this function will run forever once called, or until there is an error (returns -1)
-int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sock_size);
+int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size);
 
-int process_write_req(int sockfd, char *pkt_buf, struct client_info **clients, uint32_t *client_count, uint32_t client_id);
+// initialize client connection with outfile and next client_id, send response to client with client_id
+// return 0 on success, -1 on error
+int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, char *pkt_buf, struct client_info **clients, uint32_t *max_client_count, uint32_t client_id) {
 
 // initialize client array and set default values for client_info entries
 // return pointer to client array of length *client_count, or NULL on error
