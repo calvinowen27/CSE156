@@ -15,7 +15,6 @@
 
 // #define IP_ADDR "127.0.0.1"
 #define BUFFER_SIZE 65535
-#define START_CLIENTS 5
 
 struct client_info {
 	uint32_t id;
@@ -25,6 +24,7 @@ struct client_info {
 	off_t *ooo_file_idxs;
 	uint32_t ooo_pkt_count;
 	bool is_active;
+	const char *outfile_path;	// only saving this so it can be freed
 };
 
 int main(int argc, char **argv) {
@@ -50,34 +50,10 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 
-	char *pkt_buf = malloc(sizeof(char) * BUFFER_SIZE);
-
-	// initialize clients
-	struct client_info *clients = calloc(sizeof(struct client_info), START_CLIENTS);
-	uint16_t client_count = START_CLIENTS;
-	for (int i = 0; i < START_CLIENTS; i++) {
-		struct client_info client = clients[i];
-		client.is_active = false;
-		client.ooo_pkt_count = 256;
-		
-		client.ooo_pkt_sns = calloc(sizeof(uint32_t), client.ooo_pkt_count);
-		if (client.ooo_pkt_sns == NULL) {
-			fprintf(stderr, "myserver ~ main(): encountered an error initializing client ooo_pkt_sns.\n");
-			exit(1); // TODO: check exit codes
-		}
-
-		client.ooo_file_idxs = calloc(sizeof(off_t), client.ooo_pkt_count);
-		if (client.ooo_file_idxs == NULL) {
-			fprintf(stderr, "myserver ~ main(): encountered an error initializing client ooo_file_idxs.\n");
-			exit(1); // TODO: check exit codes
-		}
-	}
-
-	if (run(sockfd, (struct sockaddr *)&clientaddr, &clientaddr_size, pkt_buf, clients, &client_count) < 0) {
+	if (run(sockfd, (struct sockaddr *)&clientaddr, &clientaddr_size) < 0) {
 		fprintf(stderr,"myserver ~ main(): server failed to receive from socket.\n");
 	}
 
-	free(pkt_buf);
 	close(sockfd);
 
 	return 0;
@@ -85,7 +61,7 @@ int main(int argc, char **argv) {
 
 // run server: accept pkts and send acks for highest pkt sn from client during breaks
 // this function will run forever once called, or until there is an error (returns -1)
-int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sock_size, char *pkt_buf, struct client_info *clients, uint32_t *client_count) {
+int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sock_size) {
 	// while res > 0
 	//		if select (data available)
 	//			res = recv_data()
@@ -93,6 +69,19 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sock_size, char *pkt_b
 	//		else
 	//			send acks
 	//			reset sn maps (client id:highest sn)
+
+	// init pkt buffer
+	char *pkt_buf = malloc(sizeof(char) * BUFFER_SIZE);
+
+	uint32_t client_count = START_CLIENTS;
+
+	// initialize clients
+	struct client_info *clients = init_clients(START_CLIENTS);
+	if (clients == NULL) {
+		fprintf(stderr, "myserver ~ run(): encountered error initializing clients.\n");
+		return -1;
+	}
+
 
 	// configure fds and timeout for select() call
 	fd_set fds;
@@ -116,7 +105,6 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sock_size, char *pkt_b
 				
 				switch (opcode) {
 					case OP_WR:
-						// open outfile and respond with next client id
 						break;
 					case OP_DATA:
 						// write to client:outfile pkt data, check ooo buffer to see if file idx stored
@@ -140,8 +128,195 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sock_size, char *pkt_b
 		}
 	}
 
+	// free all heap memory
+	for (int i = 0; i < client_count; i++) {
+		free(clients[i].ooo_file_idxs);
+		free(clients[i].ooo_pkt_sns);
+	}
+
+	free(pkt_buf);
+
 	fprintf(stderr, "myserver ~ run(): something went wrong. Closing server.\n");
 	return -1; // TODO: check if exit code is needed
+}
+
+int process_write_req(int sockfd, char *pkt_buf, struct client_info **clients, uint32_t *client_count, uint32_t client_id) {
+	if (clients == NULL || *clients == NULL) {
+		fprintf(stderr, "myserver ~ process_write_req(): invalid ptr passed to clients parameter.\n");
+		return -1;
+	}
+
+	if (client_count == NULL) {
+		fprintf(stderr, "myserver ~ process_write_req(): null ptr passed to client_count.\n");
+		return -1;
+	}
+	
+	// create outfile path, starting at byte 1 of pkt_buf (byte 0 is opcode)
+	const char *outfile_path = calloc(strlen(pkt_buf + 1) + 1, sizeof(char));
+	memcpy(outfile_path, pkt_buf + 1, strlen(pkt_buf + 1));
+
+	if (accept_client(clients, client_count, client_id, outfile_path))
+
+	return 0;
+}
+
+// initialize client array and set default values for client_info entries
+// return pointer to client array of length *client_count, or NULL on error
+struct client_info *init_clients(uint32_t *client_count) {
+	if (client_count == NULL) {
+		fprintf(stderr, "myserver ~ init_clients(): null ptr passed to client_count.\n");
+		return -1;
+	}
+
+	struct client_info *clients = calloc(sizeof(struct client_info), *client_count);
+
+	if (clients == NULL) {
+		fprintf(stderr, "myserver ~ init_clients(): encountered an error initializing client array.\n");
+		return NULL;
+	}
+
+	for (int i = 0; i < *client_count; i++) {
+		struct client_info *client = &(clients[i]);
+		client->is_active = false;
+		client->outfile_path = NULL;
+	}
+
+	return clients;
+}
+
+// reallocate client array with CLIENT_CAP_INCREASE additional entries, initialize new entries
+// set new value of client_count, and set *clients to new ptr
+// return 0 on success, -1 on error
+int increase_client_cap(struct client_info **clients, uint32_t *client_count) {
+	if (clients == NULL || *clients == NULL) {
+		fprintf(stderr, "myserver ~ increase_client_cap(): invalid ptr passed to clients parameter.\n");
+		return -1;
+	}
+
+	if (client_count == NULL) {
+		fprintf(stderr, "myserver ~ increase_client_cap(): null ptr passed to client_count.\n");
+		return -1;
+	}
+
+	uint32_t new_client_count = *client_count + CLIENT_CAP_INCREASE;
+	struct client_info *new_clients = realloc(*clients, new_client_count);
+	
+	if (new_clients == NULL) {
+		fprintf(stderr, "myserver ~ increase_client_cap(): encountered an error reallocating client array to size %llu.\n", new_client_count);
+		return -1;
+	}
+
+	// init new client spaces
+	for (uint32_t i = *client_count; i < new_client_count; i++) {
+		struct client_info *client = &(*clients)[i];
+		client->is_active = false;
+		client->outfile_path = NULL;
+	}
+
+	*client_count = new_client_count;
+	*clients = new_clients;
+
+	return 0;
+}
+
+// accept new client with id client_id writing to file outfile_path
+// open outfile and add client to clients with outfd
+// return 0 on success, -1 on failure
+int accept_client(struct client_info **clients, uint32_t *client_count, uint32_t client_id, const char *outfile_path) {
+	if (clients == NULL || *clients == NULL) {
+		fprintf(stderr, "myserver ~ accept_client(): invalid ptr passed to clients parameter.\n");
+		return -1;
+	}
+
+	if (client_count == NULL) {
+		fprintf(stderr, "myserver ~ accept_client(): null ptr passed to client_count.\n");
+		return -1;
+	}
+	
+	// find first inactive client slot in clients
+	bool inactive_client_found = false;
+
+	for (uint32_t i = 0; i < *client_count; i++) {
+		struct client_info *client = &(*clients)[i];
+		if (!client->is_active) {
+			inactive_client_found = true;
+			if (client_info_init(client, client_id, outfile_path) < 0) {
+				fprintf(stderr, "myserver ~ accept_client(): encountered error while initializing client_info.\n");
+				return -1;
+			}
+			
+			break;
+		}
+	}
+
+	// if no inactive clients, allocate space for more then init new client
+	if (!inactive_client_found) {
+		uint32_t inactive_idx = *client_count;
+
+		if (increase_client_cap(clients, client_count) < 0) {
+			fprintf(stderr, "myserver ~ accept_client(): encountered error increasing client cap.\n");
+			return -1;
+		}
+
+		struct client_info *client = &(*clients)[inactive_idx];
+		if (client_info_init(client, client_id, outfile_path) < 0) {
+			fprintf(stderr, "myserver ~ accept_client(): encountered error while initializing client_info.\n");
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
+// initialize client_info with all relevant fields, allocate ooo buffers, open outfile
+// return 0 on success, -1 on error
+int client_info_init(struct client_info *client, uint32_t client_id, const char *outfile_path) {
+	if (client == NULL) {
+		fprintf(stderr, "myserver ~ client_info_init(): cannot initialize client with null ptr.\n");
+		return -1;
+	}
+
+	// create outfile directories if necessary
+	if (create_file_directory(outfile_path) < 0) {
+		fprintf(stderr, "myserver ~ client_info_init(): failed to create outfile directories.\n");
+		return -1;
+	}
+
+	// open outfile
+	int outfd = open(outfile_path, O_CREAT | O_TRUNC | O_RDWR, 0664);
+
+	// set client_info values
+	client->is_active = true;
+	client->id = client_id;
+	client->max_sn = 0;
+	client->outfd = outfd;
+	client->outfile_path = outfile_path;
+
+	client->ooo_pkt_count = 256;
+	
+	// allocate ooo arrays
+	client->ooo_pkt_sns = calloc(sizeof(uint32_t), client->ooo_pkt_count);
+	if (client->ooo_pkt_sns == NULL) {
+		fprintf(stderr, "myserver ~ client_info_init(): encountered an error initializing client ooo_pkt_sns.\n");
+		return -1;
+	}
+
+	client->ooo_file_idxs = calloc(sizeof(off_t), client->ooo_pkt_count);
+	if (client->ooo_file_idxs == NULL) {
+		fprintf(stderr, "myserver ~ client_info_init(): encountered an error initializing client ooo_file_idxs.\n");
+		return -1;
+	}
+
+	return 0;
+}
+
+// terminate connection with client with id client_id and free necessary memory
+// close outfile and set client inactive
+// return 0 on success, -1 on error
+int terminate_client(struct client_info **clients, uint32_t *client_count, uint32_t client_id) {
+
+
+	return 0;
 }
 
 // TODO: rework for server side (copied from myclient Lab2)

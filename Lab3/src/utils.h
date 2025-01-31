@@ -55,4 +55,8 @@ int get_pkt_opcode(char *pkt_buf);
 // can be used to get client ID from server, server assigns pkt_sn field to client ID when accepting handshake
 uint32_t get_pkt_sn(char *pkt_buf);
 
+// create all directories in file path (if they don't exist)
+// return 0 on success, -1 on error
+int create_file_directory(const char *file_path);
+
 #endif
