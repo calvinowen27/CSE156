@@ -73,7 +73,7 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sock_size) {
 	// init pkt buffer
 	char *pkt_buf = malloc(sizeof(char) * BUFFER_SIZE);
 
-	uint32_t client_count = START_CLIENTS;
+	uint32_t max_client_count = START_CLIENTS;
 
 	// initialize clients
 	struct client_info *clients = init_clients(START_CLIENTS);
@@ -129,7 +129,7 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sock_size) {
 	}
 
 	// free all heap memory
-	for (int i = 0; i < client_count; i++) {
+	for (int i = 0; i < max_client_count; i++) {
 		free(clients[i].ooo_file_idxs);
 		free(clients[i].ooo_pkt_sns);
 	}
@@ -140,14 +140,14 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sock_size) {
 	return -1; // TODO: check if exit code is needed
 }
 
-int process_write_req(int sockfd, char *pkt_buf, struct client_info **clients, uint32_t *client_count, uint32_t client_id) {
+int process_write_req(int sockfd, char *pkt_buf, struct client_info **clients, uint32_t *max_client_count, uint32_t client_id) {
 	if (clients == NULL || *clients == NULL) {
 		fprintf(stderr, "myserver ~ process_write_req(): invalid ptr passed to clients parameter.\n");
 		return -1;
 	}
 
-	if (client_count == NULL) {
-		fprintf(stderr, "myserver ~ process_write_req(): null ptr passed to client_count.\n");
+	if (max_client_count == NULL) {
+		fprintf(stderr, "myserver ~ process_write_req(): null ptr passed to max_client_count.\n");
 		return -1;
 	}
 	
@@ -155,27 +155,27 @@ int process_write_req(int sockfd, char *pkt_buf, struct client_info **clients, u
 	const char *outfile_path = calloc(strlen(pkt_buf + 1) + 1, sizeof(char));
 	memcpy(outfile_path, pkt_buf + 1, strlen(pkt_buf + 1));
 
-	if (accept_client(clients, client_count, client_id, outfile_path))
+	if (accept_client(clients, max_client_count, client_id, outfile_path))
 
 	return 0;
 }
 
 // initialize client array and set default values for client_info entries
-// return pointer to client array of length *client_count, or NULL on error
-struct client_info *init_clients(uint32_t *client_count) {
-	if (client_count == NULL) {
-		fprintf(stderr, "myserver ~ init_clients(): null ptr passed to client_count.\n");
+// return pointer to client array of length *max_client_count, or NULL on error
+struct client_info *init_clients(uint32_t *max_client_count) {
+	if (max_client_count == NULL) {
+		fprintf(stderr, "myserver ~ init_clients(): null ptr passed to max_client_count.\n");
 		return -1;
 	}
 
-	struct client_info *clients = calloc(sizeof(struct client_info), *client_count);
+	struct client_info *clients = calloc(sizeof(struct client_info), *max_client_count);
 
 	if (clients == NULL) {
 		fprintf(stderr, "myserver ~ init_clients(): encountered an error initializing client array.\n");
 		return NULL;
 	}
 
-	for (int i = 0; i < *client_count; i++) {
+	for (int i = 0; i < *max_client_count; i++) {
 		struct client_info *client = &(clients[i]);
 		client->is_active = false;
 		client->outfile_path = NULL;
@@ -185,20 +185,20 @@ struct client_info *init_clients(uint32_t *client_count) {
 }
 
 // reallocate client array with CLIENT_CAP_INCREASE additional entries, initialize new entries
-// set new value of client_count, and set *clients to new ptr
+// set new value of max_client_count, and set *clients to new ptr
 // return 0 on success, -1 on error
-int increase_client_cap(struct client_info **clients, uint32_t *client_count) {
+int increase_client_cap(struct client_info **clients, uint32_t *max_client_count) {
 	if (clients == NULL || *clients == NULL) {
 		fprintf(stderr, "myserver ~ increase_client_cap(): invalid ptr passed to clients parameter.\n");
 		return -1;
 	}
 
-	if (client_count == NULL) {
-		fprintf(stderr, "myserver ~ increase_client_cap(): null ptr passed to client_count.\n");
+	if (max_client_count == NULL) {
+		fprintf(stderr, "myserver ~ increase_client_cap(): null ptr passed to max_client_count.\n");
 		return -1;
 	}
 
-	uint32_t new_client_count = *client_count + CLIENT_CAP_INCREASE;
+	uint32_t new_client_count = *max_client_count + CLIENT_CAP_INCREASE;
 	struct client_info *new_clients = realloc(*clients, new_client_count);
 	
 	if (new_clients == NULL) {
@@ -207,13 +207,13 @@ int increase_client_cap(struct client_info **clients, uint32_t *client_count) {
 	}
 
 	// init new client spaces
-	for (uint32_t i = *client_count; i < new_client_count; i++) {
+	for (uint32_t i = *max_client_count; i < new_client_count; i++) {
 		struct client_info *client = &(*clients)[i];
 		client->is_active = false;
 		client->outfile_path = NULL;
 	}
 
-	*client_count = new_client_count;
+	*max_client_count = new_client_count;
 	*clients = new_clients;
 
 	return 0;
@@ -222,21 +222,21 @@ int increase_client_cap(struct client_info **clients, uint32_t *client_count) {
 // accept new client with id client_id writing to file outfile_path
 // open outfile and add client to clients with outfd
 // return 0 on success, -1 on failure
-int accept_client(struct client_info **clients, uint32_t *client_count, uint32_t client_id, const char *outfile_path) {
+int accept_client(struct client_info **clients, uint32_t *max_client_count, uint32_t client_id, const char *outfile_path) {
 	if (clients == NULL || *clients == NULL) {
 		fprintf(stderr, "myserver ~ accept_client(): invalid ptr passed to clients parameter.\n");
 		return -1;
 	}
 
-	if (client_count == NULL) {
-		fprintf(stderr, "myserver ~ accept_client(): null ptr passed to client_count.\n");
+	if (max_client_count == NULL) {
+		fprintf(stderr, "myserver ~ accept_client(): null ptr passed to max_client_count.\n");
 		return -1;
 	}
 	
 	// find first inactive client slot in clients
 	bool inactive_client_found = false;
 
-	for (uint32_t i = 0; i < *client_count; i++) {
+	for (uint32_t i = 0; i < *max_client_count; i++) {
 		struct client_info *client = &(*clients)[i];
 		if (!client->is_active) {
 			inactive_client_found = true;
@@ -251,9 +251,9 @@ int accept_client(struct client_info **clients, uint32_t *client_count, uint32_t
 
 	// if no inactive clients, allocate space for more then init new client
 	if (!inactive_client_found) {
-		uint32_t inactive_idx = *client_count;
+		uint32_t inactive_idx = *max_client_count;
 
-		if (increase_client_cap(clients, client_count) < 0) {
+		if (increase_client_cap(clients, max_client_count) < 0) {
 			fprintf(stderr, "myserver ~ accept_client(): encountered error increasing client cap.\n");
 			return -1;
 		}
@@ -313,8 +313,37 @@ int client_info_init(struct client_info *client, uint32_t client_id, const char 
 // terminate connection with client with id client_id and free necessary memory
 // close outfile and set client inactive
 // return 0 on success, -1 on error
-int terminate_client(struct client_info **clients, uint32_t *client_count, uint32_t client_id) {
+int terminate_client(struct client_info **clients, uint32_t *max_client_count, uint32_t client_id) {
+	if (clients == NULL || *clients == NULL) {
+		fprintf(stderr, "myserver ~ terminate_client(): invalid ptr passed to clients parameter.\n");
+		return -1;
+	}
 
+	if (max_client_count == NULL) {
+		fprintf(stderr, "myserver ~ terminate_client(): null ptr passed to max_client_count.\n");
+		return -1;
+	}
+
+	bool client_found = false;
+
+	// find client in array and free all allocated heap memory, close outfile
+	for (uint32_t i = 0; i < *max_client_count; i++) {
+		struct client_info *client = &(*clients)[i];
+		if (client->id == client_id) {
+			client->is_active = false;
+			free(client->ooo_file_idxs);
+			free(client->ooo_pkt_sns);
+			free(client->outfile_path);
+			close(client->outfd);
+			client_found = true;
+			break;
+		}
+	}
+
+	if (!client_found) {
+		fprintf(stderr, "myserver ~ terminate_client(): could not find client with id %llu to terminate.\n", client_id);
+		return -1;
+	}
 
 	return 0;
 }
