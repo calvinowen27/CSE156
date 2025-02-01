@@ -1,9 +1,9 @@
 CLIENT_BIN = myclient
 CLIENT_OBJS = src/myclient.o src/utils.o
 SERVER_BIN = myserver
-SERVER_OBJS = src/myserver.o src/utils.o
+SERVER_OBJS = src/myserver.o src/utils.o src/client_info.o
 CRASHING_SERVER_BIN = crashingserver
-CRASHING_SERVER_OBJS = src/crashingserver.o src/utils.o
+CRASHING_SERVER_OBJS = src/crashingserver.o src/utils.o src/client_info.o
 OOO_SERVER_BIN = oooserver
 OOO_SERVER_OBJS = src/oooserver.o src/utils.o
 

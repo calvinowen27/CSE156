@@ -5,7 +5,7 @@ struct pkt_ack_info;
 
 // send file from fd to sockfd, also using sockaddr
 // return 0 on success, -1 on error
-int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_size, int mss);
+int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_size, int mss, uint32_t winsz);
 
 // initiate handshake with server, which should respond with the client id
 // client id value is put in *client_id

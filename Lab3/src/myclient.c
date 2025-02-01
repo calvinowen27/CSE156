@@ -46,9 +46,11 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 
-	int winsz = atoi(argv[4]);																// winsz
+	char *endptr;
+	uint32_t winsz = strtoull(argv[4], &endptr, 10);											// winsz
+	
 	// check for valid winsz
-	if (winsz < 1) {
+	if (winsz < 1 || winsz > 0xffffffff || *endptr == '\0') {
 		printf("Invalid winsz (window size) provided. Please provide a positive integer for winsz.\n");
 		exit(1);
 	}
@@ -93,9 +95,7 @@ int main(int argc, char **argv) {
 
 // send file from fd to sockfd, also using sockaddr
 // return 0 on success, -1 on error
-int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_size, int mss, int winsz) {
-	off_t pkt_file_locations[winsz];
-
+int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_size, int mss, uint32_t winsz) {
 	uint32_t client_id, start_pkt_sn = 0, ack_pkt_sn = -1;
 
 	// initiate handshake with WR and outfile path
@@ -114,7 +114,7 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 	uint32_t pkts_sent;
 
 	struct pkt_ack_info pkt_info[winsz];
-	for (int i = 0; i < winsz; i++) {
+	for (uint32_t i = 0; i < winsz; i++) {
 		pkt_info[i].ackd = true;
 	}
 
@@ -135,7 +135,7 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 		}
 	
 		// update pkt info with ack
-		for (int i = 0; i < winsz; i++) {
+		for (uint32_t i = 0; i < winsz; i++) {
 			struct pkt_ack_info pkt = pkt_info[i];
 			if (pkt.pkt_sn >= start_pkt_sn && pkt.pkt_sn <= ack_pkt_sn) {
 				pkt.ackd = true;
@@ -274,8 +274,6 @@ int recv_server_response(int sockfd, struct sockaddr *sockaddr, socklen_t sockad
 	struct timeval timeout = { TIMEOUT_SECS, 0 };
 
 	int bytes_recvd;
-
-	uint8_t expected_packet_id_recv = 1;
 
 	if (select(sockfd + 1, &fds, NULL, NULL, &timeout) > 0) { // check there is data to be read from socket
 		if ((bytes_recvd = recvfrom(sockfd, pkt_buf, sizeof(pkt_buf), 0, sockaddr, &sockaddr_size)) >= 0) {
