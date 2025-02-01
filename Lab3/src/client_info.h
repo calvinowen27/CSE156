@@ -1,0 +1,39 @@
+#ifndef CLIENT_INFO_INCLUDE
+#define CLIENT_INFO_INCLUDE
+
+#define MAX_CLIENTS_INCREASE 5
+
+struct client_info {
+	uint32_t id;
+	int outfd;
+	uint32_t max_sn;
+	uint32_t *ooo_pkt_sns;
+	off_t *ooo_file_idxs;
+	uint32_t ooo_pkt_count;
+	bool is_active;
+	char *outfile_path;	// only saving this so it can be freed
+};
+
+// initialize client array and set default values for client_info entries
+// return pointer to client array of length *max_client_count, or NULL on error
+struct client_info *init_clients(uint32_t max_client_count);
+
+// reallocate client array with inc additional entries, initialize new entries
+// set new value of max_client_count, and set *clients to new ptr
+// return 0 on success, -1 on error
+int increase_client_cap(struct client_info **clients, uint32_t *max_client_count, uint32_t inc);
+
+// accept new client with id client_id writing to file outfile_path
+// return 0 on success, -1 on error
+int accept_client(struct client_info **clients, uint32_t *max_client_count, uint32_t client_id, char *outfile_path);
+
+// initialize client_info with all relevant fields, allocate ooo buffers, open outfile
+// return 0 on success, -1 on error
+int client_info_init(struct client_info *client, uint32_t client_id, char *outfile_path);
+
+// terminate connection with client with id client_id and free necessary memory
+// close outfile and set client inactive
+// return 0 on success, -1 on error
+int terminate_client(struct client_info **clients, uint32_t *max_client_count, uint32_t client_id);
+
+#endif
