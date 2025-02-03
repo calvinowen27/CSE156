@@ -136,6 +136,8 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size) {
 	return -1; // TODO: check if exit code is needed
 }
 
+// initialize client connection with outfile and next client_id, send response to client with client_id
+// return 0 on success, -1 on error
 int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, char *pkt_buf, struct client_info **clients, uint32_t *max_client_count, uint32_t client_id) {
 	if (clients == NULL || *clients == NULL) {
 		fprintf(stderr, "myserver ~ process_write_req(): invalid ptr passed to clients parameter.\n");
@@ -181,6 +183,63 @@ int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr
 	}
 
 	return 0;
+}
+
+// perform writing actions from a data pkt sent by known client
+// if payload size == 0, terminate client connection
+// if client unrecognized, don't do anything
+// return 0 on success, -1 on error
+int process_data_pkt(char *pkt_buf, struct client_info **clients, uint32_t *max_client_count) {
+	// if payload size == 0: terminate connection
+	// if pkt in client ooo buffer, write to file based on that
+	// else write to end of file
+	// if client unrecognized, idk don't do it
+
+	// get client id from pkt and check if we are serving that client
+	uint32_t client_id = get_data_client_id(pkt_buf);
+	if (client_id == 0) {
+		fprintf(stderr, "myserver ~ process_data_pkt(): encountered an error getting client_id from pkt.\n");
+		return -1;
+	}
+
+	bool client_found = false;
+	for (uint32_t i = 0; i < *max_client_count; i++) {
+		if ((*clients)[i].id == client_id) {
+			client_found = true;
+			break;
+		}
+	}
+
+	if (!client_found) {
+		fprintf(stderr, "myserver ~ process_data_pkt(): failed to find client %u. Terminating.\n", client_id);
+		return -1;
+	}
+
+	// get pkt sn
+	uint32_t pkt_sn = get_data_sn(pkt_buf);
+	if (pkt_sn == 0) {
+		fprintf(stderr, "myserver ~ process_data_pkt(): encountered an error getting pkt sn from data pkt.\n");
+		return -1;
+	}
+
+	// get payload size, terminate client connection if == 0
+	uint32_t pyld_sz = get_data_pyld_sz(pkt_buf);
+	if (pyld_sz == 0xffffffff) {
+		fprintf(stderr, "myserver ~ process_data_pkt(): encountered an error getting payload size from data pkt.\n");
+		return -1;
+	} else if (pyld_sz == 0) {
+		printf("myserver ~ Paylod size of 0 encountered. Terminating connection with client %u.\n", client_id);
+		if (terminate_client(clients, max_client_count, client_id) < 0) {
+			fprintf(stderr, "myserver ~ process_data_pkt(): encountered an error terminating connection with client %u.\n", client_id);
+			return -1;
+		}
+
+		return 0;
+	}
+
+	// if we've made it to here, everything is valid and client is writing data to file
+
+	// write based on sn, check for ooo
 }
 
 // TODO: rework for server side (copied from myclient Lab2)

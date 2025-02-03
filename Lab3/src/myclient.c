@@ -281,7 +281,7 @@ int recv_server_response(int sockfd, struct sockaddr *sockaddr, socklen_t sockad
 			int opcode = get_pkt_opcode(pkt_buf);
 			switch (opcode) {
 				case OP_ACK:
-					*ack_pkt_sn = get_pkt_sn(pkt_buf);	// assign pkt sn to ack_pkt_sn
+					*ack_pkt_sn = get_ack_sn(pkt_buf);	// assign pkt sn to ack_pkt_sn
 					break;
 				case OP_ERROR:
 					// TODO: idk how this is supposed to be handled tbh so make sure it's right
