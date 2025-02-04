@@ -126,8 +126,9 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size) {
 
 	// free all heap memory
 	for (uint32_t i = 0; i < max_client_count; i++) {
-		free(clients[i].ooo_file_idxs);
-		free(clients[i].ooo_pkt_sns);
+		// free(clients[i].ooo_file_idxs);
+		// free(clients[i].ooo_pkt_sns);
+		free(clients[i].ooo_pkts);
 	}
 
 	free(pkt_buf);
@@ -189,11 +190,31 @@ int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr
 // if payload size == 0, terminate client connection
 // if client unrecognized, don't do anything
 // return 0 on success, -1 on error
-int process_data_pkt(char *pkt_buf, struct client_info **clients, uint32_t *max_client_count) {
+int process_data_pkt(char *pkt_buf, struct client_info **clients, uint32_t *max_client_count, uint32_t *lowest_unackd_sn) {
 	// if payload size == 0: terminate connection
 	// if pkt in client ooo buffer, write to file based on that
 	// else write to end of file
 	// if client unrecognized, idk don't do it
+
+	if (clients == NULL || *clients == NULL) {
+		fprintf(stderr, "myserver ~ process_data_pkt(): invalid ptr passed to clients parameter.\n");
+		return -1;
+	}
+
+	if (max_client_count == NULL) {
+		fprintf(stderr, "myserver ~ process_data_pkt(): null ptr passed to max_client_count.\n");
+		return -1;
+	}
+
+	if (pkt_buf == NULL) {
+		fprintf(stderr, "myserver ~ process_data_pkt(): invalid ptr passed to pkt_buf parameter.\n");
+		return -1;
+	}
+
+	if (lowest_unackd_sn == NULL) {
+		fprintf(stderr, "myserver ~ process_data_pkt(): null ptr passed to lowest_unackd_sn.\n");
+		return -1;
+	}
 
 	// get client id from pkt and check if we are serving that client
 	uint32_t client_id = get_data_client_id(pkt_buf);
@@ -202,17 +223,18 @@ int process_data_pkt(char *pkt_buf, struct client_info **clients, uint32_t *max_
 		return -1;
 	}
 
-	bool client_found = false;
+	struct client_info *client = NULL;
 	for (uint32_t i = 0; i < *max_client_count; i++) {
 		if ((*clients)[i].id == client_id) {
-			client_found = true;
+			client = &(*clients)[i];
 			break;
 		}
 	}
 
-	if (!client_found) {
+	// don't process data, but don't exit server
+	if (client == NULL) {
 		fprintf(stderr, "myserver ~ process_data_pkt(): failed to find client %u. Terminating.\n", client_id);
-		return -1;
+		return 0;
 	}
 
 	// get pkt sn
@@ -220,6 +242,10 @@ int process_data_pkt(char *pkt_buf, struct client_info **clients, uint32_t *max_
 	if (pkt_sn == 0) {
 		fprintf(stderr, "myserver ~ process_data_pkt(): encountered an error getting pkt sn from data pkt.\n");
 		return -1;
+	}
+
+	if (*lowest_unackd_sn == pkt_sn) {
+		(*lowest_unackd_sn)++;
 	}
 
 	// get payload size, terminate client connection if == 0
@@ -240,82 +266,71 @@ int process_data_pkt(char *pkt_buf, struct client_info **clients, uint32_t *max_
 	// if we've made it to here, everything is valid and client is writing data to file
 
 	// write based on sn, check for ooo
+	if (pkt_sn == client->expected_sn) { // normal, write bytes to outfile
+		if (write_n_bytes(client->outfd, pkt_buf + DATA_HEADER_SIZE, pyld_sz) < 0) {
+			fprintf(stderr, "myserver ~ process_data_pkt(): encountered error writing bytes to outfile: %s.\n", strerror(errno));
+			return -1;
+		}
+
+		client->expected_sn = pkt_sn + 1;
+	} else if (pkt_sn > client->expected_sn) { // pkt received before expected, update ooo buffer and write to end of file
+		// store all pkts between expected_sn and pkt_sn in ooo_buffer
+		for (uint32_t sn = client->expected_sn; sn < pkt_sn; sn++) {
+			if (client->num_ooo_pkts == client->ooo_pkt_max_count) {
+				// TODO: too many ooo pkts, assume pkt loss. implement call here
+			}
+
+			// save ooo pkt to buffer at current file location
+			struct ooo_pkt *ooo_pkt = &client->ooo_pkts[client->num_ooo_pkts];
+			ooo_pkt->ackd = false;
+			ooo_pkt->sn = sn;
+			ooo_pkt->file_idx = lseek(client->outfd, 0, SEEK_END);
+			client->num_ooo_pkts += 1;
+		}
+
+		// write bytes of current pkt to end of file
+		if (write_n_bytes(client->outfd, pkt_buf + DATA_HEADER_SIZE, pyld_sz) < 0) {
+			fprintf(stderr, "myserver ~ process_data_pkt(): encountered error writing bytes to outfile: %s.\n", strerror(errno));
+			return -1;
+		}
+
+		client->expected_sn = pkt_sn + 1;
+	} else { // pkt received late, write based on ooo buffer
+		bool pkt_found = false;
+		struct ooo_pkt *ooo_pkt = NULL;
+		for (uint32_t i = 0; i < client->num_ooo_pkts; i++) {
+			ooo_pkt = &client->ooo_pkts[i];
+			if (!pkt_found && ooo_pkt->sn == pkt_sn) { // this is the pkt, write to file idx
+				// go to correct location in outfile
+				off_t file_idx = lseek(client->outfd, ooo_pkt->file_idx, SEEK_SET);
+
+				if (shift_file_contents(client->outfd, file_idx, pyld_sz) < 0) {
+					fprintf(stderr, "myserver ~ process_data_pkt(): encountered error shifting file contents for OOO write.\n");
+					return -1;
+				}
+
+				// write bytes to outfile
+				if (write_n_bytes(client->outfd, pkt_buf + DATA_HEADER_SIZE, pyld_sz) < 0) {
+					fprintf(stderr, "myserver ~ process_data_pkt(): encountered error writing bytes to outfile: %s\n", strerror(errno));
+					return -1;
+				}
+
+				// shift buffer down
+				if (i < client->num_ooo_pkts - 1) {
+					client->ooo_pkts[i] = client->ooo_pkts[i + 1];
+				}
+
+				pkt_found = true;
+				client->num_ooo_pkts -= 1;
+			} else if (pkt_found) { // file already found, shift everything down now
+				if (i < client->num_ooo_pkts) { // would be -1 but we already subtracted 1 from the actual value
+					client->ooo_pkts[i] = client->ooo_pkts[i + 1];
+				}
+			}
+		}
+	}
+
+	lseek(client->outfd, 0, SEEK_END); // reset seek ptr in case more packets come in
+
+	return 0;
 }
-
-// TODO: rework for server side (copied from myclient Lab2)
-// void parse_pkt() {
-// 	packet_id_recvd = (uint8_t)buf[0];
-// 	if (packet_id_recvd == expected_packet_id_recv) {
-// 		// write bytes to outfile
-// 		if (write_n_bytes(outfd, buf+HEADER_SIZE, strlen(buf+HEADER_SIZE)) < 0) {
-// 			fprintf(stderr, "myclient ~ send_recv_file(): encountered error writing bytes to outfile\n");
-// 			fprintf(stderr, "%s\n", strerror(errno));
-// 			return -1;
-// 		}
-
-// 		// normal, increment expected packet ID
-// 		expected_packet_id_recv = packet_id_recvd + 1;
-// 	} else if (packet_id_recvd > expected_packet_id_recv) { // packet recvd too soon
-// 		// store all packets in between recvd and expected into ooo buffer with file locations
-// 		for (uint8_t id = expected_packet_id_recv; id < packet_id_recvd; id++) {
-// 			ooo_packet_ids[num_packets_not_recvd] = id;
-// 			ooo_packet_locations[num_packets_not_recvd] = lseek(outfd, 0, SEEK_END);
-// 			num_packets_not_recvd += 1;
-// 		}
-
-// 		// write bytes to outfile
-// 		if (write_n_bytes(outfd, buf+HEADER_SIZE, strlen(buf+HEADER_SIZE)) < 0) {
-// 			fprintf(stderr, "myclient ~ send_recv_file(): encountered error writing bytes to outfile\n");
-// 			fprintf(stderr, "%s\n", strerror(errno));
-// 			return -1;
-// 		}
-
-// 		// increment expected packet ID
-// 		expected_packet_id_recv = packet_id_recvd + 1;
-// 	} else { // packet recvd late
-// 		// write packet data to file depending on ooo buffer file location
-// 		// pop packet data from ooo buffers
-// 		// change all ooo packet file locations with larger ID to current position of seek ptr
-// 		for (int i = 0; i < num_packets_not_recvd; i++) {
-// 			if (ooo_packet_ids[i] == packet_id_recvd) {
-// 				// go to correct location in outfile
-// 				off_t file_idx = lseek(outfd, ooo_packet_locations[i], SEEK_SET);
-
-// 				if (shift_file_contents(outfd, file_idx, strlen(buf+HEADER_SIZE)) < 0) {
-// 					fprintf(stderr, "myclient ~ send_recv_file(): encountered error shifting file contents for OOO write.\n");
-// 					return -1;
-// 				}
-
-// 				// write bytes to outfile
-// 				if (write_n_bytes(outfd, buf+HEADER_SIZE, strlen(buf+HEADER_SIZE)) < 0) {
-// 					fprintf(stderr, "myclient ~ send_recv_file(): encountered error writing bytes to outfile\n");
-// 					fprintf(stderr, "%s\n", strerror(errno));
-// 					return -1;
-// 				}
-				
-// 				// shift packet info down in buffer
-// 				if (i < num_packets_not_recvd - 1) {
-// 					ooo_packet_ids[i] = ooo_packet_ids[i+1];
-// 					ooo_packet_locations[i] = lseek(outfd, 0, SEEK_CUR);
-// 				} else {
-// 					ooo_packet_ids[i] = 0;
-// 					ooo_packet_locations[i] = 0;
-// 				}
-// 			} else if (ooo_packet_ids[i] > packet_id_recvd) {
-// 				// shift packet info down in buffer
-// 				if (i < num_packets_not_recvd - 1) {
-// 					ooo_packet_ids[i] = ooo_packet_ids[i+1];
-// 					ooo_packet_locations[i] = lseek(outfd, 0, SEEK_CUR);
-// 				} else {
-// 					ooo_packet_ids[i] = 0;
-// 					ooo_packet_locations[i] = 0;
-// 					num_packets_not_recvd -= 1;
-// 				}
-// 			}
-// 		}
-		
-// 		lseek(outfd, 0, SEEK_END); // reset seek ptr in case more packets come in
-
-// 		// expected not recvd yet, leave value the same
-// 	}
-// }

@@ -12,11 +12,12 @@ struct ooo_pkt {
 struct client_info {
 	uint32_t id;
 	int outfd;
-	uint32_t max_sn;
 	struct ooo_pkt *ooo_pkts;
+	uint32_t num_ooo_pkts;
 	// uint32_t *ooo_pkt_sns;
 	// off_t *ooo_file_idxs;
-	uint32_t ooo_pkt_count;
+	uint32_t expected_sn;
+	uint32_t ooo_pkt_max_count;
 	bool is_active;
 	char *outfile_path;	// only saving this so it can be freed
 };
