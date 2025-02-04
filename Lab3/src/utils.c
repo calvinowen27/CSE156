@@ -293,6 +293,37 @@ int get_pkt_opcode(char *pkt_buf) {
 	return (int)pkt_buf[0];
 }
 
+// returns window size of pkt_buf, 0 on error
+uint32_t get_write_req_window_sz(char *pkt_buf) {
+	if (pkt_buf == NULL) {
+		fprintf(stderr, "utils ~ get_write_req_window_sz(): cannot pass NULL ptr to pkt_buf.\n");
+		return 0;
+	}
+
+	uint32_t res;
+
+	// pkt_sn occurs right after opcode for ack, not at all for error
+	// check opcode for ack, otherwise return 0
+	if ((int)pkt_buf[0] == OP_WR) {
+		uint8_t bytes[4];
+		bytes[0] = pkt_buf[1];
+		bytes[1] = pkt_buf[2];
+		bytes[2] = pkt_buf[3];
+		bytes[3] = pkt_buf[4];
+		
+		res = reunite_bytes(bytes);
+		if (res < 0) {
+			fprintf(stderr, "utils ~ get_write_req_window_sz(): something went wrong while reuniting bytes of pkt sn.\n");
+			return 0;
+		}
+	} else {
+		fprintf(stderr, "utils ~ get_write_req_window_sz(): pkt_buf does not contain valid opcode to get a sequence number.\n");
+		return 0;
+	}
+
+	return res;
+}
+
 // returns client id of pkt_buf, 0 on error
 uint32_t get_data_client_id(char *pkt_buf) {
 	if (pkt_buf == NULL) {

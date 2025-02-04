@@ -19,10 +19,10 @@
 #define MIN_MSS_SIZE MAX_HEADER_SIZE + 1
 
 struct pkt_ack_info {
-	uint32_t pkt_sn;
 	off_t file_idx;
 	bool ackd;
 	int retransmits;
+	bool active;
 };
 
 int main(int argc, char **argv) {
@@ -105,21 +105,24 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 
 	// once we're here, we should have client id value in client_id, meaning handshake is complete
 
-	bool reached_eof = false;
-	bool need_pkt_resend = false;
+	bool need_pkt_resend, reached_eof = false;
 
 	// need to resend pkts if ack sn < last pkt sn sent
 	// send pkts from ack sn + 1
 	uint32_t pkts_sent;
 
 	struct pkt_ack_info pkt_info[winsz];
-	for (uint32_t i = 0; i < winsz; i++) {
-		pkt_info[i].ackd = true;
-		pkt_info[i].retransmits = 0;
+	for (uint32_t sn = 0; sn < winsz; sn++) {
+		pkt_info[sn].active = false;
+		pkt_info[sn].retransmits = 0;
+		pkt_info[sn].ackd = false;
+		pkt_info[sn].file_idx = 0;
 	}
 
 	// continue while eof hasn't been reached or pkts need to be resent
 	while (!reached_eof || need_pkt_resend) {
+		need_pkt_resend = false;
+
 		// send pkt window
 		printf("sending window.\n");
 		if ((pkts_sent = send_window_pkts(infd, sockfd, sockaddr, sockaddr_size, mss, winsz, client_id, start_pkt_sn, pkt_info)) < 0) {
@@ -138,23 +141,24 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 		}
 
 		printf("received response from server. ack: %u\n", ack_pkt_sn);
-	
+
 		// update pkt info with ack
-		for (uint32_t i = 0; i < pkts_sent; i++) {
-			struct pkt_ack_info *pkt = &pkt_info[i];
-			if (pkt->pkt_sn >= start_pkt_sn && pkt->pkt_sn <= ack_pkt_sn) {
-				pkt->ackd = true;
-			} else {
-				if (pkt->retransmits >= 3) {
+		for (uint32_t sn = 0; sn < pkts_sent; sn++) {
+			struct pkt_ack_info *pkt = &pkt_info[sn];
+			if (pkt->active) {
+				if (sn >= start_pkt_sn || sn <= ack_pkt_sn) {
+					pkt->ackd = true;
+				} else if (pkt->retransmits > 3) {
 					fprintf(stderr, "myclient ~ send_file(): exceeded 3 retransmits for a single packet.\n");
 					exit(1); // TODO: make sure this is the right exit code for failure/too many retransmissions
+				} else {
+					need_pkt_resend = true;
 				}
 			}
 		}
 
-		need_pkt_resend = ack_pkt_sn != start_pkt_sn + pkts_sent; // != to work for wraparound, > case isn't possible(?)
-
 		start_pkt_sn = ack_pkt_sn + 1;
+		if (start_pkt_sn == winsz) start_pkt_sn = 0; // wrap back
 	}
 
 	return 0;
@@ -195,54 +199,52 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 	char pkt_buf[mss];
 	memset(pkt_buf, 0, sizeof(pkt_buf));
 
-	uint32_t bytes_read;
+	// reset pkt info array
+	for (uint32_t sn = 0; sn < winsz; sn++) {
+		struct pkt_ack_info *pkt = &pkt_info[sn];
+
+		if (pkt->ackd) {
+			pkt->retransmits = 0;
+		} else if (pkt->active) {
+			pkt->retransmits ++;
+		}
+
+		pkt->active = false;
+		pkt->ackd = false;
+	}
+
+	// check start pkt for ack, if no ack, go back to file idx
+	struct pkt_ack_info *pkt = &pkt_info[start_pkt_sn];
+	if (!pkt->ackd) {
+		lseek(infd, pkt->file_idx, SEEK_SET);
+	} else {
+		lseek(infd, 0, SEEK_END);
+	}
+
+	uint32_t pyld_sz;
 
 	bool eof_reached = false;
 
 	uint32_t pkt_sn = start_pkt_sn;
 	uint32_t pkts_sent = 0;
+	int bytes_read;
 
-	int free_info_idx;
-	bool pkt_found;
 	while (pkts_sent < winsz && !eof_reached) { // only send max winsz packets
-		pkt_found = false;
-
-		// update info
-		free_info_idx = -1;
-		for (uint32_t i = 0; i < winsz; i++) {
-			struct pkt_ack_info *pkt = &pkt_info[i];
-			if (pkt->pkt_sn == pkt_sn) {
-				// seek file idx of pkt
-				lseek(infd, pkt->file_idx, SEEK_SET);
-				pkt_found = true;
-				pkt->retransmits++;
-				printf("seek.\n");
-				break;
-			} else if (free_info_idx == -1 && pkt->ackd) { // find first ackd (not needed) pkt
-				free_info_idx = i;
-			}
-		}
-
-		// if pkt sn not found, add at free_info_idx
-		if (!pkt_found && free_info_idx != -1) {
-			struct pkt_ack_info pkt = pkt_info[free_info_idx];
-			pkt.pkt_sn = pkt_sn;
-			pkt.ackd = false;
-			pkt.file_idx = lseek(infd, 0, SEEK_CUR);
-			printf("seek 2\n");
-			pkt.retransmits = 0;
-		}
+		pkt = &pkt_info[pkt_sn];
+		pkt->file_idx = lseek(infd, 0, SEEK_CUR);
+		pkt->active = true;
+		pkt->ackd = false;
 
 		// bytes_read is our payload size
-		int a = read(infd, pkt_buf + DATA_HEADER_SIZE, ((uint32_t)mss) - ((uint32_t)DATA_HEADER_SIZE));
-		bytes_read = (uint32_t)a;
+		bytes_read = read(infd, pkt_buf + DATA_HEADER_SIZE, ((uint32_t)mss) - ((uint32_t)DATA_HEADER_SIZE));
+		pyld_sz = (uint32_t)bytes_read;
 
-		printf("read %d bytes from file, requested %u.\n", a, ((uint32_t)mss) - ((uint32_t)DATA_HEADER_SIZE));
+		printf("read %d bytes from file, requested %u.\n", bytes_read, ((uint32_t)mss) - ((uint32_t)DATA_HEADER_SIZE));
 		
-		if (a < 0) {
+		if (bytes_read < 0) {
 			fprintf(stderr, "myclient ~ send_window_pkts(): encountered an error reading from infile.\n");
 			return -1;
-		} else if (a == 0) {
+		} else if (bytes_read == 0) {
 			eof_reached = true;
 		}
 		
@@ -258,13 +260,14 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 		assign_pkt_sn(pkt_buf, pkt_sn);
 
 		// assign payload size
-		assign_pkt_pyld_sz(pkt_buf, bytes_read);
+		assign_pkt_pyld_sz(pkt_buf, pyld_sz);
 
-		if (sendto(sockfd, pkt_buf, DATA_HEADER_SIZE + bytes_read, 0, sockaddr, *sockaddr_size) < 0) {
+		if (sendto(sockfd, pkt_buf, DATA_HEADER_SIZE + pyld_sz, 0, sockaddr, *sockaddr_size) < 0) {
 			fprintf(stderr, "myclient ~ send_window_pkts(): client failed to send packet to server.\n");
 			return -1;
 		}
 
+		// ------------------------------------------ temp ------------------------- //
 		printf("Packet %u sent.\n", pkt_sn);
 
 		char idk[bytes_read + 1];
@@ -274,8 +277,10 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 		printf("\nPacket %u:\n%s\n", pkt_sn, idk);
 
 		if (eof_reached) printf("End of file.\n");
+		// ------------------------------------------------------------------------- //
 
-		pkt_sn++; // wraparound is fine
+		pkt_sn++;
+		if (pkt_sn == winsz) pkt_sn = 0; // wrap back to unused pkt_info
 
 		pkts_sent++;
 

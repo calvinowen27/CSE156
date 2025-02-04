@@ -55,6 +55,9 @@ int assign_pkt_pyld_sz(char *pkt_buf, uint32_t pyld_sz);
 // returns opcode of pkt_buf, -1 on error
 int get_pkt_opcode(char *pkt_buf);
 
+// returns window size of pkt_buf, 0 on error
+uint32_t get_write_req_window_sz(char *pkt_buf);
+
 // returns client id of pkt_buf, 0 on error
 uint32_t get_data_client_id(char *pkt_buf);
 

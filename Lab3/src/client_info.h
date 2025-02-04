@@ -14,13 +14,13 @@ struct client_info {
 	int outfd;
 	struct ooo_pkt *ooo_pkts;
 	uint32_t num_ooo_pkts;
+	uint32_t ooo_pkt_max_count;
 	uint32_t lowest_unackd_sn;
 	struct sockaddr *sockaddr;
 	socklen_t *sockaddr_size;
 	// uint32_t *ooo_pkt_sns;
 	// off_t *ooo_file_idxs;
 	uint32_t expected_sn;
-	uint32_t ooo_pkt_max_count;
 	bool is_active;
 	char *outfile_path;	// only saving this so it can be freed
 };
