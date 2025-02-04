@@ -18,6 +18,10 @@ int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr
 // if payload size == 0, terminate client connection
 // if client unrecognized, don't do anything
 // return 0 on success, -1 on error
-int process_data_pkt(char *pkt_buf, struct client_info **clients, uint32_t *max_client_count);
+int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, uint32_t *max_client_count);
+
+// send ack to client based on what packets were received
+// return 0 on success, -1 on error
+int send_client_ack(struct client_info *client, int sockfd);
 
 #endif

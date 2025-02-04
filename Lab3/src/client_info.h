@@ -18,6 +18,7 @@ struct client_info {
 	socklen_t *sockaddr_size;
 	uint32_t winsz;
 	uint32_t expected_sn;
+	bool ack_sent;
 	bool is_active;
 	char *outfile_path;	// only saving this so it can be freed
 };
