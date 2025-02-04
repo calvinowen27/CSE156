@@ -136,19 +136,25 @@ int client_info_init(struct client_info *client, uint32_t client_id, char *outfi
 	client->outfile_path = outfile_path;
 
 	client->ooo_pkt_count = 256;
-	
-	// allocate ooo arrays
-	client->ooo_pkt_sns = calloc(sizeof(uint32_t), client->ooo_pkt_count);
-	if (client->ooo_pkt_sns == NULL) {
-		fprintf(stderr, "myserver ~ client_info_init(): encountered an error initializing client ooo_pkt_sns.\n");
-		return -1;
-	}
 
-	client->ooo_file_idxs = calloc(sizeof(off_t), client->ooo_pkt_count);
-	if (client->ooo_file_idxs == NULL) {
-		fprintf(stderr, "myserver ~ client_info_init(): encountered an error initializing client ooo_file_idxs.\n");
-		return -1;
+	// allocate ooo_pkt buffer
+	client->ooo_pkts = calloc(sizeof(struct ooo_pkt), client->ooo_pkt_count);
+	if (client->ooo_pkts == NULL) {
+		fprintf(stderr, "myserver ~ client_info_init(): encountered an error initializing client ooo_pkts.\n");
+		return -1;	
 	}
+	
+	// client->ooo_pkt_sns = calloc(sizeof(uint32_t), client->ooo_pkt_count);
+	// if (client->ooo_pkt_sns == NULL) {
+	// 	fprintf(stderr, "myserver ~ client_info_init(): encountered an error initializing client ooo_pkt_sns.\n");
+	// 	return -1;
+	// }
+
+	// client->ooo_file_idxs = calloc(sizeof(off_t), client->ooo_pkt_count);
+	// if (client->ooo_file_idxs == NULL) {
+	// 	fprintf(stderr, "myserver ~ client_info_init(): encountered an error initializing client ooo_file_idxs.\n");
+	// 	return -1;
+	// }
 
 	return 0;
 }
@@ -174,8 +180,9 @@ int terminate_client(struct client_info **clients, uint32_t *max_client_count, u
 		struct client_info *client = &(*clients)[i];
 		if (client->id == client_id) {
 			client->is_active = false;
-			free(client->ooo_file_idxs);
-			free(client->ooo_pkt_sns);
+			// free(client->ooo_file_idxs);
+			// free(client->ooo_pkt_sns);
+			free(client->ooo_pkts);
 			free(client->outfile_path);
 			close(client->outfd);
 			client_found = true;
