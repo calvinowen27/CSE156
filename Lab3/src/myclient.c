@@ -50,7 +50,7 @@ int main(int argc, char **argv) {
 	uint32_t winsz = strtoull(argv[4], &endptr, 10);											// winsz
 	
 	// check for valid winsz
-	if (winsz < 1 || winsz > 0xffffffff || *endptr == '\0') {
+	if (winsz < 1 || winsz > 0xffffffff || *endptr != '\0') {
 		printf("Invalid winsz (window size) provided. Please provide a positive integer for winsz.\n");
 		exit(1);
 	}
@@ -60,9 +60,8 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 
-	char *infile_path = argv[4];															// infile path
-	char *outfile_path = argv[5];															// outfile path
-	(void)outfile_path;
+	char *infile_path = argv[5];															// infile path
+	char *outfile_path = argv[6];															// outfile path
 	
 	int infd = open(infile_path, O_RDONLY, 0664);
 	if (infd < 0) {
@@ -80,7 +79,7 @@ int main(int argc, char **argv) {
 	}
 
 	// send in file to server
-	if (send_file(infd, outfile_path, sockfd, (struct sockaddr *)&serveraddr, serveraddr_size, mss, winsz) < 0) {
+	if (send_file(infd, outfile_path, sockfd, (struct sockaddr *)&serveraddr, &serveraddr_size, mss, winsz) < 0) {
 		fprintf(stderr, "myclient ~ main(): failed to send or receive file %s to server.\n", infile_path);
 		exit(1);
 	}
@@ -95,7 +94,7 @@ int main(int argc, char **argv) {
 
 // send file from fd to sockfd, also using sockaddr
 // return 0 on success, -1 on error
-int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_size, int mss, uint32_t winsz) {
+int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int mss, uint32_t winsz) {
 	uint32_t client_id, start_pkt_sn = 0, ack_pkt_sn = -1;
 
 	// initiate handshake with WR and outfile path
@@ -116,15 +115,19 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 	struct pkt_ack_info pkt_info[winsz];
 	for (uint32_t i = 0; i < winsz; i++) {
 		pkt_info[i].ackd = true;
+		pkt_info[i].retransmits = 0;
 	}
 
 	// continue while eof hasn't been reached or pkts need to be resent
 	while (!reached_eof || need_pkt_resend) {
 		// send pkt window
+		printf("sending window.\n");
 		if ((pkts_sent = send_window_pkts(infd, sockfd, sockaddr, sockaddr_size, mss, winsz, client_id, start_pkt_sn, pkt_info)) < 0) {
 			fprintf(stderr, "myclient ~ send_file(): encountered an error while sending pkt window.\n");
 			return -1;
 		}
+
+		printf("window sending complete.\n");
 
 		reached_eof = pkts_sent < winsz; // update reached_eof
 
@@ -133,14 +136,16 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 			fprintf(stderr, "myclient ~ send_file(): encourntered an error while trying to receive server response.\n");
 			return -1;
 		}
+
+		printf("received response from server. ack: %u\n", ack_pkt_sn);
 	
 		// update pkt info with ack
-		for (uint32_t i = 0; i < winsz; i++) {
-			struct pkt_ack_info pkt = pkt_info[i];
-			if (pkt.pkt_sn >= start_pkt_sn && pkt.pkt_sn <= ack_pkt_sn) {
-				pkt.ackd = true;
+		for (uint32_t i = 0; i < pkts_sent; i++) {
+			struct pkt_ack_info *pkt = &pkt_info[i];
+			if (pkt->pkt_sn >= start_pkt_sn && pkt->pkt_sn <= ack_pkt_sn) {
+				pkt->ackd = true;
 			} else {
-				if (pkt.retransmits >= 3) {
+				if (pkt->retransmits >= 3) {
 					fprintf(stderr, "myclient ~ send_file(): exceeded 3 retransmits for a single packet.\n");
 					exit(1); // TODO: make sure this is the right exit code for failure/too many retransmissions
 				}
@@ -158,7 +163,7 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 // initiate handshake with server, which should respond with the client id
 // client id value is put in *client_id
 // return 0 on success, -1 on error
-int perform_handshake(int sockfd, const char *outfile_path, struct sockaddr *sockaddr, socklen_t sockaddr_size, uint32_t *client_id) {
+int perform_handshake(int sockfd, const char *outfile_path, struct sockaddr *sockaddr, socklen_t *sockaddr_size, uint32_t *client_id) {
 	// construct WR packet
 	char handshake_buf[1 + strlen(outfile_path) + 1];				// null terminated and opcode both 1 byte
 	handshake_buf[0] = OP_WR;										// set WR opcode
@@ -166,10 +171,12 @@ int perform_handshake(int sockfd, const char *outfile_path, struct sockaddr *soc
 	memcpy(handshake_buf + 1, outfile_path, strlen(outfile_path));	// copy outfile_path to pkt
 
 	// send WR to server
-	if (sendto(sockfd, handshake_buf, sizeof(handshake_buf), 0, sockaddr, sockaddr_size) < 0) {
+	if (sendto(sockfd, handshake_buf, sizeof(handshake_buf), 0, sockaddr, *sockaddr_size) < 0) {
 		fprintf(stderr, "myclient ~ perform_handshake(): client failed to send WR pkt to server.\n");
 		return -1;
 	}
+
+	printf("Initial write request packet sent.\n");
 
 	// client id is in sn spot of first ack, so pass &client_id to ack_pkt_sn*
 	if (recv_server_response(sockfd, sockaddr, sockaddr_size, client_id) < 0) {
@@ -177,12 +184,14 @@ int perform_handshake(int sockfd, const char *outfile_path, struct sockaddr *soc
 		return -1;
 	}
 
+	printf("Connection confirmed by server.\n");
+
 	return 0;
 }
 
 // send window of pkts with content from infd
 // returns number of pkts sent, -1 on error
-int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_size, int mss, int winsz, uint32_t client_id, uint32_t start_pkt_sn, struct pkt_ack_info *pkt_info) {
+int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int mss, uint32_t winsz, uint32_t client_id, uint32_t start_pkt_sn, struct pkt_ack_info *pkt_info) {
 	char pkt_buf[mss];
 	memset(pkt_buf, 0, sizeof(pkt_buf));
 
@@ -191,22 +200,25 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 	bool eof_reached = false;
 
 	uint32_t pkt_sn = start_pkt_sn;
-	int pkts_sent = 0;
+	uint32_t pkts_sent = 0;
 
 	int free_info_idx;
-	bool pkt_found = false;
-	while (pkts_sent < winsz) { // only send max winsz packets
+	bool pkt_found;
+	while (pkts_sent < winsz && !eof_reached) { // only send max winsz packets
+		pkt_found = false;
+
 		// update info
 		free_info_idx = -1;
-		for (int i = 0; i < winsz; i++) {
-			struct pkt_ack_info pkt = pkt_info[i];
-			if (pkt.pkt_sn == pkt_sn) {
+		for (uint32_t i = 0; i < winsz; i++) {
+			struct pkt_ack_info *pkt = &pkt_info[i];
+			if (pkt->pkt_sn == pkt_sn) {
 				// seek file idx of pkt
-				lseek(infd, pkt.file_idx, SEEK_SET);
+				lseek(infd, pkt->file_idx, SEEK_SET);
 				pkt_found = true;
-				pkt.retransmits++;
+				pkt->retransmits++;
+				printf("seek.\n");
 				break;
-			} else if (free_info_idx == -1 && pkt.ackd) { // find first ackd (not needed) pkt
+			} else if (free_info_idx == -1 && pkt->ackd) { // find first ackd (not needed) pkt
 				free_info_idx = i;
 			}
 		}
@@ -217,19 +229,25 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 			pkt.pkt_sn = pkt_sn;
 			pkt.ackd = false;
 			pkt.file_idx = lseek(infd, 0, SEEK_CUR);
+			printf("seek 2\n");
 			pkt.retransmits = 0;
 		}
 
 		// bytes_read is our payload size
-		bytes_read = (uint32_t)read(infd, pkt_buf + DATA_HEADER_SIZE, mss - DATA_HEADER_SIZE);
+		int a = read(infd, pkt_buf + DATA_HEADER_SIZE, ((uint32_t)mss) - ((uint32_t)DATA_HEADER_SIZE));
+		bytes_read = (uint32_t)a;
+
+		printf("read %d bytes from file, requested %u.\n", a, ((uint32_t)mss) - ((uint32_t)DATA_HEADER_SIZE));
 		
-		if (bytes_read < 0) {
+		if (a < 0) {
 			fprintf(stderr, "myclient ~ send_window_pkts(): encountered an error reading from infile.\n");
 			return -1;
-		} else if (bytes_read == 0) {
+		} else if (a == 0) {
 			eof_reached = true;
 		}
 		
+		printf("beginning pkt assignments.\n");
+
 		// assign opcode
 		assign_pkt_opcode(pkt_buf, OP_DATA);
 
@@ -242,20 +260,26 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 		// assign payload size
 		assign_pkt_pyld_sz(pkt_buf, bytes_read);
 
-		if (sendto(sockfd, pkt_buf, DATA_HEADER_SIZE + bytes_read, 0, sockaddr, sockaddr_size) < 0) {
+		if (sendto(sockfd, pkt_buf, DATA_HEADER_SIZE + bytes_read, 0, sockaddr, *sockaddr_size) < 0) {
 			fprintf(stderr, "myclient ~ send_window_pkts(): client failed to send packet to server.\n");
 			return -1;
 		}
+
+		printf("Packet %u sent.\n", pkt_sn);
+
+		char idk[bytes_read + 1];
+		idk[bytes_read] = 0;
+		memcpy(idk, pkt_buf + DATA_HEADER_SIZE, bytes_read);
+
+		printf("\nPacket %u:\n%s\n", pkt_sn, idk);
+
+		if (eof_reached) printf("End of file.\n");
 
 		pkt_sn++; // wraparound is fine
 
 		pkts_sent++;
 
 		memset(pkt_buf, 0, sizeof(pkt_buf));
-
-		if (eof_reached) {
-			break; // finished reading file, now just wait to receive rest of packets
-		}
 	}
 
 	return pkts_sent;
@@ -263,7 +287,7 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 
 // wait for server response, ack_pkt_sn is output
 // return 0 on success, -1 on error
-int recv_server_response(int sockfd, struct sockaddr *sockaddr, socklen_t sockaddr_size, uint32_t *ack_pkt_sn) {
+int recv_server_response(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, uint32_t *ack_pkt_sn) {
 	char pkt_buf[MAX_SRVR_RES_SIZE];
 	memset(pkt_buf, 0, sizeof(pkt_buf));
 
@@ -276,7 +300,7 @@ int recv_server_response(int sockfd, struct sockaddr *sockaddr, socklen_t sockad
 	int bytes_recvd;
 
 	if (select(sockfd + 1, &fds, NULL, NULL, &timeout) > 0) { // check there is data to be read from socket
-		if ((bytes_recvd = recvfrom(sockfd, pkt_buf, sizeof(pkt_buf), 0, sockaddr, &sockaddr_size)) >= 0) {
+		if ((bytes_recvd = recvfrom(sockfd, pkt_buf, sizeof(pkt_buf), 0, sockaddr, sockaddr_size)) >= 0) {
 			// recvfrom success
 			int opcode = get_pkt_opcode(pkt_buf);
 			switch (opcode) {

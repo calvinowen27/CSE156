@@ -324,7 +324,7 @@ uint32_t get_data_client_id(char *pkt_buf) {
 	return res;
 }
 
-// returns pkt sn of pkt_buf if data pkt, 0 on error
+// returns pkt sn of pkt_buf if data pkt, 0 on error and sets errno to EDEVERR
 uint32_t get_data_sn(char *pkt_buf) {
 	if (pkt_buf == NULL) {
 		fprintf(stderr, "utils ~ get_data_sn(): cannot pass NULL ptr to pkt_buf.\n");
@@ -345,10 +345,12 @@ uint32_t get_data_sn(char *pkt_buf) {
 		res = reunite_bytes(bytes);
 		if (res < 0) {
 			fprintf(stderr, "utils ~ get_data_sn(): something went wrong while reuniting bytes of pkt sn.\n");
+			errno = EDEVERR;
 			return 0;
 		}
 	} else {
 		fprintf(stderr, "utils ~ get_data_sn(): pkt_buf does not contain valid opcode to get a sequence number.\n");
+		errno = EDEVERR;
 		return 0;
 	}
 

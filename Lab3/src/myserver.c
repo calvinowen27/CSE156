@@ -92,8 +92,11 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size) {
 	while (1) { // hopefully run forever
 		// reset timeout
 		timeout.tv_sec = LOSS_TIMEOUT_SECS;
+		FD_SET(sockfd, &fds);
 
+		printf("waiting\n");
 		if (select(sockfd + 1, &fds, NULL, NULL, &timeout) > 0) { // check there is data to be read from socket
+			printf("see pkt\n");
 			// data available at socket
 			// read into buffer
 			if ((bytes_recvd = recvfrom(sockfd, pkt_buf, BUFFER_SIZE, 0, sockaddr, sockaddr_size)) >= 0) {
@@ -109,8 +112,6 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size) {
 						next_client_id++;
 						break;
 					case OP_DATA:
-						// write to client:outfile pkt data, check ooo buffer to see if file idx stored
-						// if payload size == 0: terminate connection
 						if (process_data_pkt(pkt_buf, &clients, &max_client_count) < 0) {
 							fprintf(stderr, "myserver ~ run(): encountered error processing data pkt.\n");
 							return -1;
@@ -144,7 +145,7 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size) {
 
 				char ack_buf[5];
 				ack_buf[0] = OP_ACK;
-				if (assign_ack_sn(ack_buf, client->lowest_unackd_sn) < 0) {
+				if (assign_ack_sn(ack_buf, client->lowest_unackd_sn - 1) < 0) {
 					fprintf(stderr, "myserver ~ run(): encountered an error assigning client %u lowest sn %u to ack buf.\n", client->id, client->lowest_unackd_sn);
 					return -1;
 				}
@@ -153,6 +154,8 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size) {
 					fprintf(stderr, "myserver ~ run(): encountered an error sending ack to client %u with sn %u.\n", client->id, client->lowest_unackd_sn);
 					return -1;
 				}
+
+				printf("Sent ack to client %u for sn %u.\n", client->id, client->lowest_unackd_sn - 1);
 			}
 		}
 	}
@@ -229,6 +232,8 @@ int process_data_pkt(char *pkt_buf, struct client_info **clients, uint32_t *max_
 	// else write to end of file
 	// if client unrecognized, idk don't do it
 
+	printf("data pkt recvd.\n");
+
 	if (clients == NULL || *clients == NULL) {
 		fprintf(stderr, "myserver ~ process_data_pkt(): invalid ptr passed to clients parameter.\n");
 		return -1;
@@ -267,7 +272,7 @@ int process_data_pkt(char *pkt_buf, struct client_info **clients, uint32_t *max_
 
 	// get pkt sn
 	uint32_t pkt_sn = get_data_sn(pkt_buf);
-	if (pkt_sn == 0) {
+	if (pkt_sn == 0 && errno == EDEVERR) {
 		fprintf(stderr, "myserver ~ process_data_pkt(): encountered an error getting pkt sn from data pkt.\n");
 		return -1;
 	}
@@ -282,14 +287,17 @@ int process_data_pkt(char *pkt_buf, struct client_info **clients, uint32_t *max_
 		fprintf(stderr, "myserver ~ process_data_pkt(): encountered an error getting payload size from data pkt.\n");
 		return -1;
 	} else if (pyld_sz == 0) {
-		printf("myserver ~ Paylod size of 0 encountered. Terminating connection with client %u.\n", client_id);
+		printf("myserver ~ Payload size of 0 encountered. Terminating connection with client %u.\n", client_id);
 		if (terminate_client(clients, max_client_count, client_id) < 0) {
 			fprintf(stderr, "myserver ~ process_data_pkt(): encountered an error terminating connection with client %u.\n", client_id);
 			return -1;
 		}
-
-		return 0;
 	}
+
+	char idk[pyld_sz+1];
+	idk[pyld_sz] = 0;
+	memcpy(idk, pkt_buf + DATA_HEADER_SIZE, pyld_sz);
+	printf("\nPacket %u:\n%s\n", pkt_sn, idk);
 
 	// if we've made it to here, everything is valid and client is writing data to file
 

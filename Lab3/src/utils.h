@@ -58,7 +58,7 @@ int get_pkt_opcode(char *pkt_buf);
 // returns client id of pkt_buf, 0 on error
 uint32_t get_data_client_id(char *pkt_buf);
 
-// returns pkt sn of pkt_buf if data pkt, 0 on error
+// returns pkt sn of pkt_buf if data pkt, 0 on error and sets errno to EDEVERR
 uint32_t get_data_sn(char *pkt_buf);
 
 // returns payload size of pkt_buf if data pkt, 0xffffffff on error
