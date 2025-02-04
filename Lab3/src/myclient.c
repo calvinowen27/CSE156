@@ -178,16 +178,19 @@ int perform_handshake(int sockfd, const char *outfile_path, struct sockaddr *soc
 	handshake_buf[sizeof(handshake_buf) - 1] = 0;					// null terminate
 	memcpy(handshake_buf + WR_HEADER_SIZE, outfile_path, strlen(outfile_path));	// copy outfile_path to pkt
 
-	// send WR to server
-	if (sendto(sockfd, handshake_buf, sizeof(handshake_buf), 0, sockaddr, *sockaddr_size) < 0) {
-		fprintf(stderr, "myclient ~ perform_handshake(): client failed to send WR pkt to server.\n");
-		return -1;
-	}
+	int recv_res = 1;
 
-	printf("Initial write request packet sent.\n");
+	do {
+		printf("Initial write request packet sent.\n");
 
-	// client id is in sn spot of first ack, so pass &client_id to ack_pkt_sn*
-	if (recv_server_response(sockfd, sockaddr, sockaddr_size, client_id) < 0) {
+		// send WR to server
+		if (sendto(sockfd, handshake_buf, sizeof(handshake_buf), 0, sockaddr, *sockaddr_size) < 0) {
+			fprintf(stderr, "myclient ~ perform_handshake(): client failed to send WR pkt to server.\n");
+			return -1;
+		}
+	} while ((recv_res = recv_server_response(sockfd, sockaddr, sockaddr_size, client_id)) == 1);
+
+	if (recv_res < 0) {
 		fprintf(stderr, "myclient ~ perform_handshake(): failed to recv server handshake response.\n");
 		return -1;
 	}
@@ -283,7 +286,7 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 }
 
 // wait for server response, ack_pkt_sn is output
-// return 0 on success, -1 on error
+// return 0 on success, 1 on resend, -1 on error
 int recv_server_response(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, uint32_t *ack_pkt_sn) {
 	char pkt_buf[MAX_SRVR_RES_SIZE];
 	memset(pkt_buf, 0, sizeof(pkt_buf));
@@ -324,7 +327,7 @@ int recv_server_response(int sockfd, struct sockaddr *sockaddr, socklen_t *socka
 		// TODO: retransmit pkt window since we didn't hear back from the server, keep track of retransmits per pkt
 		//		also make sure to update the error message V V V
 		fprintf(stderr, "myclient ~ recv_server_response(): no server response. Here we should resend pkt window (not implemented).\n");
-		return -1;
+		return 1;
 	}
 
 	return 0;
