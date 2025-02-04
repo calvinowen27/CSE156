@@ -260,6 +260,8 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 		// assign payload size
 		assign_pkt_pyld_sz(pkt_buf, pyld_sz);
 
+		printf("Sending DATA %u.\n", pkt_sn);
+
 		if (sendto(sockfd, pkt_buf, DATA_HEADER_SIZE + pyld_sz, 0, sockaddr, *sockaddr_size) < 0) {
 			fprintf(stderr, "myclient ~ send_window_pkts(): client failed to send packet to server.\n");
 			return -1;

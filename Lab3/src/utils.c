@@ -471,6 +471,7 @@ uint32_t get_ack_sn(char *pkt_buf) {
 		}
 	} else {
 		fprintf(stderr, "utils ~ get_ack_sn(): pkt_buf does not contain valid opcode to get a sequence number.\n");
+		errno = EDEVERR;
 		return 0;
 	}
 

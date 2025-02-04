@@ -8,7 +8,7 @@ struct client_info;
 
 // receive data from sockfd and echo it back as it arrives back to the client
 // this function will run forever once called, or until there is an error (returns -1)
-int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size);
+int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int droppc);
 
 // initialize client connection with outfile and next client_id, send response to client with client_id
 // return 0 on success, -1 on error
@@ -18,10 +18,12 @@ int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr
 // if payload size == 0, terminate client connection
 // if client unrecognized, don't do anything
 // return 0 on success, -1 on error
-int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, uint32_t *max_client_count);
+int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, uint32_t *max_client_count, int *pkts_sent, int droppc);
 
 // send ack to client based on what packets were received
 // return 0 on success, -1 on error
-int send_client_ack(struct client_info *client, int sockfd);
+int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int droppc);
+
+int drop_pkt(char *pkt_buf, int pkt_count, int droppc);
 
 #endif

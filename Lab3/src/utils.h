@@ -71,7 +71,7 @@ uint32_t get_data_sn(char *pkt_buf);
 // returns payload size of pkt_buf if data pkt, 0xffffffff on error
 uint32_t get_data_pyld_sz(char *pkt_buf);
 
-// returns pkt sn of pkt_buf if ack pkt, 0 on error
+// returns pkt sn of pkt_buf if ack pkt, 0 on error and sets errno to EDEVERR
 // can be used to get client ID from server, server assigns pkt_sn field to client ID when accepting handshake
 uint32_t get_ack_sn(char *pkt_buf);
 

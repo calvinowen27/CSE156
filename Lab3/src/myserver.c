@@ -8,6 +8,7 @@
 #include <string.h>
 #include <regex.h>
 #include <arpa/inet.h>
+#include <time.h>
 
 #include "myserver.h"
 #include "utils.h"
@@ -46,7 +47,7 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 
-	if (run(sockfd, (struct sockaddr *)&clientaddr, &clientaddr_size) < 0) {
+	if (run(sockfd, (struct sockaddr *)&clientaddr, &clientaddr_size, droppc) < 0) {
 		fprintf(stderr,"myserver ~ main(): server failed to receive from socket.\n");
 	}
 
@@ -57,7 +58,7 @@ int main(int argc, char **argv) {
 
 // run server: accept pkts and send acks for highest pkt sn from client during breaks
 // this function will run forever once called, or until there is an error (returns -1)
-int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size) {
+int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int droppc) {
 	// while res > 0
 	//		if select (data available)
 	//			res = recv_data()
@@ -78,6 +79,7 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size) {
 		return -1;
 	}
 
+	int pkts_recvd = 0, pkts_sent = 0;
 
 	// configure fds and timeout for select() call
 	fd_set fds;
@@ -98,6 +100,14 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size) {
 			// data available at socket
 			// read into buffer
 			if ((bytes_recvd = recvfrom(sockfd, pkt_buf, BUFFER_SIZE, 0, sockaddr, sockaddr_size)) >= 0) {
+
+				if (drop_pkt(pkt_buf, pkts_recvd, droppc)) {
+					pkts_recvd ++;
+					continue;
+				}
+
+				pkts_recvd ++;
+
 				int opcode = get_pkt_opcode(pkt_buf);
 				
 				switch (opcode) {
@@ -110,7 +120,7 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size) {
 						next_client_id++;
 						break;
 					case OP_DATA:
-						if (process_data_pkt(sockfd, pkt_buf, &clients, &max_client_count) < 0) {
+						if (process_data_pkt(sockfd, pkt_buf, &clients, &max_client_count, &pkts_sent, droppc) < 0) {
 							fprintf(stderr, "myserver ~ run(): encountered error processing data pkt.\n");
 							return -1;
 						}
@@ -129,11 +139,11 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size) {
 			// send acks and reset id:sn maps
 			for (uint32_t i = 0; i < max_client_count; i++) {
 				struct client_info *client = &clients[i];
-				if (!client->is_active || client->ack_sent) {
+				if (!client->is_active) {
 					continue;
 				}
 
-				if (send_client_ack(client, sockfd) < 0) {
+				if (send_client_ack(client, sockfd, &pkts_sent, droppc) < 0) {
 					fprintf(stderr, "myserver ~ run(): encountered error while sending ack to client.\n");
 					return -1;
 				}
@@ -156,7 +166,7 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size) {
 
 // send ack to client based on what packets were received
 // return 0 on success, -1 on error
-int send_client_ack(struct client_info *client, int sockfd) {
+int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int droppc) {
 	// find first unackd pkt
 	uint32_t pkts_counted = 0;
 	client->first_unackd_sn = client->expected_start_sn;
@@ -179,17 +189,24 @@ int send_client_ack(struct client_info *client, int sockfd) {
 
 	char ack_buf[5];
 	ack_buf[0] = OP_ACK;
-	if (assign_ack_sn(ack_buf, client->first_unackd_sn == 0 ? client->winsz - 1 : client->first_unackd_sn - 1) < 0) {
+	uint32_t ack_sn = client->first_unackd_sn == 0 ? client->winsz - 1 : client->first_unackd_sn - 1;
+	if (assign_ack_sn(ack_buf, ack_sn) < 0) {
 		fprintf(stderr, "myserver ~ send_client_ack(): encountered an error assigning client %u lowest sn %u to ack buf.\n", client->id, client->first_unackd_sn);
 		return -1;
 	}
 
-	if (sendto(sockfd, ack_buf, 5, 0, client->sockaddr, *client->sockaddr_size) < 0) {
+	if (drop_pkt(ack_buf, *pkts_sent, droppc)) {
+		(*pkts_sent) ++;
+
+		return 0;
+	} else if (sendto(sockfd, ack_buf, 5, 0, client->sockaddr, *client->sockaddr_size) < 0) {
 		fprintf(stderr, "myserver ~ send_client_ack(): encountered an error sending ack to client %u with sn %u.\n", client->id, client->first_unackd_sn);
 		return -1;
 	}
 
-	client->ack_sent = true;
+	(*pkts_sent) ++;
+	
+	// client->ack_sent = true;
 
 	return 0;
 }
@@ -253,7 +270,7 @@ int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr
 // if payload size == 0, terminate client connection
 // if client unrecognized, don't do anything
 // return 0 on success, -1 on error
-int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, uint32_t *max_client_count) {
+int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, uint32_t *max_client_count, int *pkts_sent, int droppc) {
 	// if payload size == 0: terminate connection
 	// if pkt in client ooo buffer, write to file based on that
 	// else write to end of file
@@ -295,7 +312,7 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, ui
 		return 0;
 	}
 
-	client->ack_sent = false;
+	// client->ack_sent = false;
 
 	// get pkt sn
 	uint32_t pkt_sn = get_data_sn(pkt_buf);
@@ -315,7 +332,7 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, ui
 		return -1;
 	} else if (pyld_sz == 0) {
 		printf("myserver ~ Payload size of 0 encountered. Terminating connection with client %u.\n", client_id);
-		if (send_client_ack(client, sockfd) < 0) {
+		if (send_client_ack(client, sockfd, pkts_sent, droppc) < 0) {
 			fprintf(stderr, "myserver ~ process_data_pkt(): encountered error sending final ack to client.\n");
 			return -1;
 		}
@@ -380,11 +397,43 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, ui
 	lseek(client->outfd, 0, SEEK_END); // reset seek ptr in case more packets come in
 
 	if (pkt_sn == client->expected_start_sn - 1 || (pkt_sn == client->winsz - 1 && client->expected_start_sn == 0)) {
-		if (send_client_ack(client, sockfd) < 0) {
+		if (send_client_ack(client, sockfd, pkts_sent, droppc) < 0) {
 			fprintf(stderr, "myserver ~ process_data_pkt(): encountered error sending ack to client.\n");
 			return -1;
 		}
 	}
 
 	return 0;
+}
+
+int drop_pkt(char *pkt_buf, int pkt_count, int droppc) {
+	if ((pkt_count % 100) + 1 > droppc) {
+		return 0;
+	}
+
+	time_t t = time(NULL);
+	struct tm *tm = gmtime(&t);
+
+	uint32_t opcode = get_pkt_opcode(pkt_buf);
+	if (opcode == 0) {
+		fprintf(stderr, "myserver ~ drop_recvd_pkt(): encountered error getting opcode from pkt.\n");
+		return -1;
+	}
+
+	if (opcode < OP_WR || opcode > OP_DATA) {
+		fprintf(stderr, "myserver ~ drop_recvd_pkt(): opcode %u is not supported by server.\n", opcode);
+		return -1;
+	}
+
+	char *opstring = opcode == OP_ACK ? "DROP ACK" : "DROP DATA";
+
+	uint32_t sn = opcode == OP_WR ? 0 : (opcode == OP_ACK ? get_ack_sn(pkt_buf) : get_data_sn(pkt_buf));
+	if (sn == 0 && errno == EDEVERR) {
+		fprintf(stderr, "myserver ~ drop_recvd_pkt(): encountered an error getting pkt sn from pkt.\n");
+		return -1;
+	}
+
+	printf("%d-%02d-%02dT%02d:%02d:%02dZ, %s, %u\n", tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec, opstring, sn);
+
+	return 1;
 }
