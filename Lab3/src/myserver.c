@@ -373,6 +373,10 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, ui
 		}
 	}
 
+	if (client->expected_sn == client->winsz) {
+		client->expected_sn = 0;
+	}
+
 	lseek(client->outfd, 0, SEEK_END); // reset seek ptr in case more packets come in
 
 	if (pkt_sn == client->expected_start_sn - 1 || (pkt_sn == client->winsz - 1 && client->expected_start_sn == 0)) {
