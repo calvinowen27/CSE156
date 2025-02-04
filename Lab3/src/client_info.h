@@ -4,7 +4,6 @@
 #define MAX_CLIENTS_INCREASE 5
 
 struct ooo_pkt {
-	uint32_t sn;
 	off_t file_idx;
 	bool ackd;
 };
@@ -13,9 +12,8 @@ struct client_info {
 	uint32_t id;
 	int outfd;
 	struct ooo_pkt *ooo_pkts;
-	uint32_t num_ooo_pkts;
-	uint32_t ooo_pkt_max_count;
-	uint32_t lowest_unackd_sn;
+	uint32_t expected_start_sn;
+	uint32_t first_unackd_sn;
 	struct sockaddr *sockaddr;
 	socklen_t *sockaddr_size;
 	uint32_t winsz;

@@ -98,7 +98,7 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 	uint32_t client_id, start_pkt_sn = 0, ack_pkt_sn = -1;
 
 	// initiate handshake with WR and outfile path
-	if (perform_handshake(sockfd, outfile_path, sockaddr, sockaddr_size, &client_id) < 0) {
+	if (perform_handshake(sockfd, outfile_path, sockaddr, sockaddr_size, &client_id, winsz) < 0) {
 		fprintf(stderr, "myclient ~ send_file(): encountered an error while performing handshake with server.\n");
 		return -1;
 	}
@@ -148,6 +148,8 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 			if (pkt->active) {
 				if (sn >= start_pkt_sn || sn <= ack_pkt_sn) {
 					pkt->ackd = true;
+					pkt->active = false;
+					printf("ack %u\n", sn);
 				} else if (pkt->retransmits > 3) {
 					fprintf(stderr, "myclient ~ send_file(): exceeded 3 retransmits for a single packet.\n");
 					exit(1); // TODO: make sure this is the right exit code for failure/too many retransmissions
@@ -167,12 +169,18 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 // initiate handshake with server, which should respond with the client id
 // client id value is put in *client_id
 // return 0 on success, -1 on error
-int perform_handshake(int sockfd, const char *outfile_path, struct sockaddr *sockaddr, socklen_t *sockaddr_size, uint32_t *client_id) {
+int perform_handshake(int sockfd, const char *outfile_path, struct sockaddr *sockaddr, socklen_t *sockaddr_size, uint32_t *client_id, uint32_t winsz) {
 	// construct WR packet
-	char handshake_buf[1 + strlen(outfile_path) + 1];				// null terminated and opcode both 1 byte
+	char handshake_buf[WR_HEADER_SIZE + strlen(outfile_path) + 1];				// null terminated and opcode both 1 byte
 	handshake_buf[0] = OP_WR;										// set WR opcode
+
+	if (assign_wr_winsz(handshake_buf, winsz) < 0) {
+		fprintf(stderr, "myclient ~ perform_handshake(): encountered error assigning window size to handshake buffer.\n");
+		return -1;
+	}
+
 	handshake_buf[sizeof(handshake_buf) - 1] = 0;					// null terminate
-	memcpy(handshake_buf + 1, outfile_path, strlen(outfile_path));	// copy outfile_path to pkt
+	memcpy(handshake_buf + WR_HEADER_SIZE, outfile_path, strlen(outfile_path));	// copy outfile_path to pkt
 
 	// send WR to server
 	if (sendto(sockfd, handshake_buf, sizeof(handshake_buf), 0, sockaddr, *sockaddr_size) < 0) {
@@ -215,10 +223,8 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 
 	// check start pkt for ack, if no ack, go back to file idx
 	struct pkt_ack_info *pkt = &pkt_info[start_pkt_sn];
-	if (!pkt->ackd) {
+	if (!pkt->ackd && pkt->active) {
 		lseek(infd, pkt->file_idx, SEEK_SET);
-	} else {
-		lseek(infd, 0, SEEK_END);
 	}
 
 	uint32_t pyld_sz;

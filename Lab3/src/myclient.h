@@ -10,7 +10,7 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 // initiate handshake with server, which should respond with the client id
 // client id value is put in *client_id
 // return 0 on success, -1 on error
-int perform_handshake(int sockfd, const char *outfile_path, struct sockaddr *sockaddr, socklen_t *sockaddr_size, uint32_t *client_id);
+int perform_handshake(int sockfd, const char *outfile_path, struct sockaddr *sockaddr, socklen_t *sockaddr_size, uint32_t *client_id, uint32_t winsz);
 
 // send window of pkts with content from infd
 // returns number of pkts sent, -1 on error

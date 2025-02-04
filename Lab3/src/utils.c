@@ -179,6 +179,32 @@ int assign_pkt_opcode(char *pkt_buf, int opcode) {
 	return 0;
 }
 
+// assign winsz to header bytes of pkt_buf
+// return 0 on success, -1 on error
+int assign_wr_winsz(char *pkt_buf, uint32_t winsz) {
+	if (pkt_buf == NULL) {
+		fprintf(stderr, "utils ~ assign_wr_winsz(): cannot pass NULL ptr to pkt_buf.\n");
+		return -1;
+	}
+
+	uint8_t *bytes = split_bytes(winsz);
+
+	if (bytes == NULL) {
+		fprintf(stderr, "utils ~ assign_wr_winsz(): something went wrong when splitting bytes of client_id.\n");
+		return -1;
+	}
+	
+	// client_id goes right after opcode (1)
+	pkt_buf[1] = bytes[0];
+	pkt_buf[2] = bytes[1];
+	pkt_buf[3] = bytes[2];
+	pkt_buf[4] = bytes[3];
+
+	free(bytes);
+
+	return 0;
+}
+
 // assign client_id to header bytes of pkt_buf
 // return 0 on success, -1 on error
 int assign_pkt_client_id(char *pkt_buf, uint32_t client_id) {
@@ -294,7 +320,7 @@ int get_pkt_opcode(char *pkt_buf) {
 }
 
 // returns window size of pkt_buf, 0 on error
-uint32_t get_write_req_window_sz(char *pkt_buf) {
+uint32_t get_write_req_winsz(char *pkt_buf) {
 	if (pkt_buf == NULL) {
 		fprintf(stderr, "utils ~ get_write_req_window_sz(): cannot pass NULL ptr to pkt_buf.\n");
 		return 0;

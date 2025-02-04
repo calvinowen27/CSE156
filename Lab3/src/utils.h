@@ -36,6 +36,10 @@ int init_socket(struct sockaddr_in *sockaddr, const char *ip_addr, int port, int
 // return 0 on success, -1 on error
 int assign_pkt_opcode(char *pkt_buf, int opcode);
 
+// assign winsz to header bytes of pkt_buf
+// return 0 on success, -1 on error
+int assign_wr_winsz(char *pkt_buf, uint32_t winsz);
+
 // assign client_id to header bytes of pkt_buf
 // return 0 on success, -1 on error
 int assign_pkt_client_id(char *pkt_buf, uint32_t client_id);
@@ -56,7 +60,7 @@ int assign_pkt_pyld_sz(char *pkt_buf, uint32_t pyld_sz);
 int get_pkt_opcode(char *pkt_buf);
 
 // returns window size of pkt_buf, 0 on error
-uint32_t get_write_req_window_sz(char *pkt_buf);
+uint32_t get_write_req_winsz(char *pkt_buf);
 
 // returns client id of pkt_buf, 0 on error
 uint32_t get_data_client_id(char *pkt_buf);

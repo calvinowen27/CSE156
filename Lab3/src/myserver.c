@@ -128,6 +128,8 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size) {
 				return -1;
 			}
 		} else {
+			uint32_t pkts_counted;
+
 			// send acks and reset id:sn maps
 			for (uint32_t i = 0; i < max_client_count; i++) {
 				struct client_info *client = &clients[i];
@@ -135,27 +137,39 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size) {
 					continue;
 				}
 
-				for (uint32_t j = 0; j < client->num_ooo_pkts; j++) {
-					if (client->lowest_unackd_sn == client->ooo_pkts[j].sn) {
-						client->lowest_unackd_sn++;
+				// find first unackd pkt
+				pkts_counted = 0;
+				client->first_unackd_sn = client->expected_start_sn;
+				while (pkts_counted < client->winsz) {
+					if (!client->ooo_pkts[client->first_unackd_sn].ackd) {
+						break;
 					}
+
+					client->first_unackd_sn ++;
+
+					if (client->first_unackd_sn == client->winsz) client->first_unackd_sn = 0;
+
+					pkts_counted ++;
 				}
 
-				client->num_ooo_pkts = 0;
+				client->expected_start_sn = client->first_unackd_sn;
+
+				// next expected is first unackd
+				client->expected_sn = client->expected_start_sn;
 
 				char ack_buf[5];
 				ack_buf[0] = OP_ACK;
-				if (assign_ack_sn(ack_buf, client->lowest_unackd_sn - 1) < 0) {
-					fprintf(stderr, "myserver ~ run(): encountered an error assigning client %u lowest sn %u to ack buf.\n", client->id, client->lowest_unackd_sn);
+				if (assign_ack_sn(ack_buf, client->first_unackd_sn == 0 ? client->winsz - 1 : client->first_unackd_sn - 1) < 0) {
+					fprintf(stderr, "myserver ~ run(): encountered an error assigning client %u lowest sn %u to ack buf.\n", client->id, client->first_unackd_sn);
 					return -1;
 				}
 
 				if (sendto(sockfd, ack_buf, 5, 0, client->sockaddr, *client->sockaddr_size) < 0) {
-					fprintf(stderr, "myserver ~ run(): encountered an error sending ack to client %u with sn %u.\n", client->id, client->lowest_unackd_sn);
+					fprintf(stderr, "myserver ~ run(): encountered an error sending ack to client %u with sn %u.\n", client->id, client->first_unackd_sn);
 					return -1;
 				}
 
-				printf("Sent ack to client %u for sn %u.\n", client->id, client->lowest_unackd_sn - 1);
+				printf("Sent ack to client %u for sn %u.\n", client->id, client->first_unackd_sn - 1);
 			}
 		}
 	}
@@ -185,13 +199,21 @@ int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr
 		fprintf(stderr, "myserver ~ process_write_req(): null ptr passed to max_client_count.\n");
 		return -1;
 	}
+
+	uint32_t winsz = get_write_req_winsz(pkt_buf);
+	if (winsz == 0) {
+		fprintf(stderr, "myserver ~ process_write_req(): encountered an error getting window size from write request pkt.\n");
+		return -1;
+	}
+
+	printf("winsz: %u\n", winsz);
 	
 	// create outfile path, starting at byte 1 of pkt_buf (byte 0 is opcode)
-	char *outfile_path = calloc(strlen(pkt_buf + 1) + 1, sizeof(char));
-	memcpy(outfile_path, pkt_buf + 1, strlen(pkt_buf + 1));
+	char *outfile_path = calloc(strlen(pkt_buf + WR_HEADER_SIZE) + 1, sizeof(char));
+	memcpy(outfile_path, pkt_buf + WR_HEADER_SIZE, strlen(pkt_buf + WR_HEADER_SIZE));
 
 	// accept client, initializing all client_info data and opening outfile for writing
-	if (accept_client(clients, max_client_count, client_id, outfile_path, sockaddr, sockaddr_size) < 0) {
+	if (accept_client(clients, max_client_count, client_id, outfile_path, sockaddr, sockaddr_size, winsz) < 0) {
 		fprintf(stderr, "myserver ~ process_write_req(): encountered error while accepting client %u.\n", client_id);
 		return -1;
 	}
@@ -277,11 +299,11 @@ int process_data_pkt(char *pkt_buf, struct client_info **clients, uint32_t *max_
 		return -1;
 	}
 
-	if (client->lowest_unackd_sn == pkt_sn) {
-		client->lowest_unackd_sn++;
+	if (client->first_unackd_sn == pkt_sn) {
+		client->first_unackd_sn++;
 	}
 
-	// get payload size, terminate client connection if == 0
+	// get payload size, terminate client connection if == 0xffffffff
 	uint32_t pyld_sz = get_data_pyld_sz(pkt_buf);
 	if (pyld_sz == 0xffffffff) {
 		fprintf(stderr, "myserver ~ process_data_pkt(): encountered an error getting payload size from data pkt.\n");
@@ -312,16 +334,10 @@ int process_data_pkt(char *pkt_buf, struct client_info **clients, uint32_t *max_
 	} else if (pkt_sn > client->expected_sn) { // pkt received before expected, update ooo buffer and write to end of file
 		// store all pkts between expected_sn and pkt_sn in ooo_buffer
 		for (uint32_t sn = client->expected_sn; sn < pkt_sn; sn++) {
-			if (client->num_ooo_pkts == client->ooo_pkt_max_count) {
-				// TODO: too many ooo pkts, assume pkt loss. implement call here
-			}
-
 			// save ooo pkt to buffer at current file location
-			struct ooo_pkt *ooo_pkt = &client->ooo_pkts[client->num_ooo_pkts];
+			struct ooo_pkt *ooo_pkt = &client->ooo_pkts[sn];
 			ooo_pkt->ackd = false;
-			ooo_pkt->sn = sn;
 			ooo_pkt->file_idx = lseek(client->outfd, 0, SEEK_END);
-			client->num_ooo_pkts += 1;
 		}
 
 		// write bytes of current pkt to end of file
@@ -332,37 +348,21 @@ int process_data_pkt(char *pkt_buf, struct client_info **clients, uint32_t *max_
 
 		client->expected_sn = pkt_sn + 1;
 	} else { // pkt received late, write based on ooo buffer
-		bool pkt_found = false;
-		struct ooo_pkt *ooo_pkt = NULL;
-		for (uint32_t i = 0; i < client->num_ooo_pkts; i++) {
-			ooo_pkt = &client->ooo_pkts[i];
-			if (!pkt_found && ooo_pkt->sn == pkt_sn) { // this is the pkt, write to file idx
-				// go to correct location in outfile
-				off_t file_idx = lseek(client->outfd, ooo_pkt->file_idx, SEEK_SET);
+		struct ooo_pkt *ooo_pkt = &client->ooo_pkts[pkt_sn];
+		ooo_pkt->ackd = true;
+		
+		// go to correct location in outfile
+		off_t file_idx = lseek(client->outfd, ooo_pkt->file_idx, SEEK_SET);
 
-				if (shift_file_contents(client->outfd, file_idx, pyld_sz) < 0) {
-					fprintf(stderr, "myserver ~ process_data_pkt(): encountered error shifting file contents for OOO write.\n");
-					return -1;
-				}
+		if (shift_file_contents(client->outfd, file_idx, pyld_sz) < 0) {
+			fprintf(stderr, "myserver ~ process_data_pkt(): encountered error shifting file contents for OOO write.\n");
+			return -1;
+		}
 
-				// write bytes to outfile
-				if (write_n_bytes(client->outfd, pkt_buf + DATA_HEADER_SIZE, pyld_sz) < 0) {
-					fprintf(stderr, "myserver ~ process_data_pkt(): encountered error writing bytes to outfile: %s\n", strerror(errno));
-					return -1;
-				}
-
-				// shift buffer down
-				if (i < client->num_ooo_pkts - 1) {
-					client->ooo_pkts[i] = client->ooo_pkts[i + 1];
-				}
-
-				pkt_found = true;
-				client->num_ooo_pkts -= 1;
-			} else if (pkt_found) { // file already found, shift everything down now
-				if (i < client->num_ooo_pkts) { // would be -1 but we already subtracted 1 from the actual value
-					client->ooo_pkts[i] = client->ooo_pkts[i + 1];
-				}
-			}
+		// write bytes to outfile
+		if (write_n_bytes(client->outfd, pkt_buf + DATA_HEADER_SIZE, pyld_sz) < 0) {
+			fprintf(stderr, "myserver ~ process_data_pkt(): encountered error writing bytes to outfile: %s\n", strerror(errno));
+			return -1;
 		}
 	}
 

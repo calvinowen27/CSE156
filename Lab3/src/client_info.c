@@ -135,21 +135,26 @@ int client_info_init(struct client_info *client, uint32_t client_id, char *outfi
 	client->expected_sn = 0;
 	client->outfd = outfd;
 	client->outfile_path = outfile_path;
-	client->lowest_unackd_sn = 0;
+	client->first_unackd_sn = 0;
 	client->sockaddr = sockaddr;
 	client->sockaddr_size = sockaddr_size;
 	client->winsz = winsz;
 
-	client->ooo_pkt_max_count = 256;
-
 	// allocate ooo_pkt buffer
-	client->ooo_pkts = calloc(sizeof(struct ooo_pkt), client->ooo_pkt_max_count);
+	client->ooo_pkts = calloc(sizeof(struct ooo_pkt), client->winsz);
 	if (client->ooo_pkts == NULL) {
 		fprintf(stderr, "myserver ~ client_info_init(): encountered an error initializing client ooo_pkts.\n");
 		return -1;	
 	}
 
-	client->num_ooo_pkts = 0;
+	for (uint32_t sn = 0; sn < client->winsz; sn++) {
+		struct ooo_pkt *ooo_pkt = &client->ooo_pkts[sn];
+
+		ooo_pkt->ackd = true;
+		ooo_pkt->file_idx = 0;
+	}
+
+	client->expected_start_sn = 0;
 	
 	// client->ooo_pkt_sns = calloc(sizeof(uint32_t), client->ooo_pkt_max_count);
 	// if (client->ooo_pkt_sns == NULL) {

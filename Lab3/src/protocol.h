@@ -7,7 +7,9 @@
 #define SN_BYTES 4													// num bytes for sequence number
 #define CID_BYTES 4													// num bytes for client ID
 #define PYLD_SZ_BYTES 4												// num bytes for payload size
+#define WINSZ_BYTES 4												// num bytes for window size
 #define DATA_HEADER_SIZE CID_BYTES + SN_BYTES + PYLD_SZ_BYTES + 1	// header size for data packet
+#define WR_HEADER_SIZE WINSZ_BYTES + 1
 #define MAX_HEADER_SIZE DATA_HEADER_SIZE
 #define MAX_SRVR_RES_SIZE CID_BYTES + 1								// max length of a packet sent from the server
 
