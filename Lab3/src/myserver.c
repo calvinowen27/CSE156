@@ -87,9 +87,9 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size) {
 
 	uint32_t next_client_id = 1;
 
-	int bytes_recvd, res = 1;
+	int bytes_recvd;
 
-	while (res == 0) { // hopefully run forever
+	while (1) { // hopefully run forever
 		// reset timeout
 		timeout.tv_sec = LOSS_TIMEOUT_SECS;
 
