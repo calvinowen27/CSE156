@@ -19,7 +19,7 @@
 
 int main(int argc, char **argv) {
 	// handle command line args
-	if (argc != 2) {
+	if (argc != 3) {
 		printf("Invalid number of options provided.\nThis is where I will print the usage of the program.\n");
 		exit(1);
 	}
@@ -27,6 +27,12 @@ int main(int argc, char **argv) {
 	int port = atoi(argv[1]);
 	if (port < 0 || port > 65535) {
 		printf("Invalid port provided. Please provide a port between 0-65535.\n");
+		exit(1);
+	}
+
+	int droppc = atoi(argv[2]);
+	if (droppc < 0 || port > 100) {
+		printf("Invalid droppc provided. Please provide a drop percentage between 0-100.\n");
 		exit(1);
 	}
 
