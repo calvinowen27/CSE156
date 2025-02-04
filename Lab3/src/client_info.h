@@ -18,8 +18,7 @@ struct client_info {
 	uint32_t lowest_unackd_sn;
 	struct sockaddr *sockaddr;
 	socklen_t *sockaddr_size;
-	// uint32_t *ooo_pkt_sns;
-	// off_t *ooo_file_idxs;
+	uint32_t winsz;
 	uint32_t expected_sn;
 	bool is_active;
 	char *outfile_path;	// only saving this so it can be freed
@@ -36,11 +35,11 @@ int increase_client_cap(struct client_info **clients, uint32_t *max_client_count
 
 // accept new client with id client_id writing to file outfile_path
 // return 0 on success, -1 on error
-int accept_client(struct client_info **clients, uint32_t *max_client_count, uint32_t client_id, char *outfile_path, struct sockaddr *sockaddr, socklen_t *sockaddr_size);
+int accept_client(struct client_info **clients, uint32_t *max_client_count, uint32_t client_id, char *outfile_path, struct sockaddr *sockaddr, socklen_t *sockaddr_size, uint32_t winsz);
 
 // initialize client_info with all relevant fields, allocate ooo buffers, open outfile
 // return 0 on success, -1 on error
-int client_info_init(struct client_info *client, uint32_t client_id, char *outfile_path, struct sockaddr *sockaddr, socklen_t *sockaddr_size);
+int client_info_init(struct client_info *client, uint32_t client_id, char *outfile_path, struct sockaddr *sockaddr, socklen_t *sockaddr_size, uint32_t winsz);
 
 // terminate connection with client with id client_id and free necessary memory
 // close outfile and set client inactive

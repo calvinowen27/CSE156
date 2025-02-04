@@ -66,7 +66,7 @@ int increase_client_cap(struct client_info **clients, uint32_t *max_client_count
 // accept new client with id client_id writing to file outfile_path
 // open outfile and add client to clients with outfd
 // return 0 on success, -1 on failure
-int accept_client(struct client_info **clients, uint32_t *max_client_count, uint32_t client_id, char *outfile_path, struct sockaddr *sockaddr, socklen_t *sockaddr_size) {
+int accept_client(struct client_info **clients, uint32_t *max_client_count, uint32_t client_id, char *outfile_path, struct sockaddr *sockaddr, socklen_t *sockaddr_size, uint32_t winsz) {
 	if (clients == NULL || *clients == NULL) {
 		fprintf(stderr, "myserver ~ accept_client(): invalid ptr passed to clients parameter.\n");
 		return -1;
@@ -84,7 +84,7 @@ int accept_client(struct client_info **clients, uint32_t *max_client_count, uint
 		struct client_info *client = &(*clients)[i];
 		if (!client->is_active) {
 			inactive_client_found = true;
-			if (client_info_init(client, client_id, outfile_path, sockaddr, sockaddr_size) < 0) {
+			if (client_info_init(client, client_id, outfile_path, sockaddr, sockaddr_size, winsz) < 0) {
 				fprintf(stderr, "myserver ~ accept_client(): encountered error while initializing client_info.\n");
 				return -1;
 			}
@@ -103,7 +103,7 @@ int accept_client(struct client_info **clients, uint32_t *max_client_count, uint
 		}
 
 		struct client_info *client = &(*clients)[inactive_idx];
-		if (client_info_init(client, client_id, outfile_path, sockaddr, sockaddr_size) < 0) {
+		if (client_info_init(client, client_id, outfile_path, sockaddr, sockaddr_size, winsz) < 0) {
 			fprintf(stderr, "myserver ~ accept_client(): encountered error while initializing client_info.\n");
 			return -1;
 		}
@@ -114,7 +114,7 @@ int accept_client(struct client_info **clients, uint32_t *max_client_count, uint
 
 // initialize client_info with all relevant fields, allocate ooo buffers, open outfile
 // return 0 on success, -1 on error
-int client_info_init(struct client_info *client, uint32_t client_id, char *outfile_path, struct sockaddr *sockaddr, socklen_t *sockaddr_size) {
+int client_info_init(struct client_info *client, uint32_t client_id, char *outfile_path, struct sockaddr *sockaddr, socklen_t *sockaddr_size, uint32_t winsz) {
 	if (client == NULL) {
 		fprintf(stderr, "myserver ~ client_info_init(): cannot initialize client with null ptr.\n");
 		return -1;
@@ -138,6 +138,7 @@ int client_info_init(struct client_info *client, uint32_t client_id, char *outfi
 	client->lowest_unackd_sn = 0;
 	client->sockaddr = sockaddr;
 	client->sockaddr_size = sockaddr_size;
+	client->winsz = winsz;
 
 	client->ooo_pkt_max_count = 256;
 
