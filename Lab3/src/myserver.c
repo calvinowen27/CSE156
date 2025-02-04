@@ -105,9 +105,10 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size) {
 					case OP_DATA:
 						// write to client:outfile pkt data, check ooo buffer to see if file idx stored
 						// if payload size == 0: terminate connection
-						break;
-					case OP_ERROR:
-						// terminate connection
+						if (process_data_pkt(pkt_buf, &clients, &max_client_count) < 0) {
+							fprintf(stderr, "myserver ~ run(): encountered error processing data pkt.\n");
+							return -1;
+						}
 						break;
 					default:
 						// do nothing?
@@ -121,6 +122,32 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size) {
 			}
 		} else {
 			// send acks and reset id:sn maps
+			for (uint32_t i = 0; i < max_client_count; i++) {
+				struct client_info *client = &clients[i];
+				if (!client->is_active) {
+					continue;
+				}
+
+				for (uint32_t j = 0; j < client->num_ooo_pkts; j++) {
+					if (client->lowest_unackd_sn == client->ooo_pkts[j].sn) {
+						client->lowest_unackd_sn++;
+					}
+				}
+
+				client->num_ooo_pkts = 0;
+
+				char ack_buf[5];
+				ack_buf[0] = OP_ACK;
+				if (assign_ack_sn(ack_buf, client->lowest_unackd_sn) < 0) {
+					fprintf(stderr, "myserver ~ run(): encountered an error assigning client %u lowest sn %u to ack buf.\n", client->id, client->lowest_unackd_sn);
+					return -1;
+				}
+
+				if (sendto(sockfd, ack_buf, 5, 0, client->sockaddr, *client->sockaddr_size) < 0) {
+					fprintf(stderr, "myserver ~ run(): encountered an error sending ack to client %u with sn %u.\n", client->id, client->lowest_unackd_sn);
+					return -1;
+				}
+			}
 		}
 	}
 
@@ -155,7 +182,7 @@ int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr
 	memcpy(outfile_path, pkt_buf + 1, strlen(pkt_buf + 1));
 
 	// accept client, initializing all client_info data and opening outfile for writing
-	if (accept_client(clients, max_client_count, client_id, outfile_path) < 0) {
+	if (accept_client(clients, max_client_count, client_id, outfile_path, sockaddr, sockaddr_size) < 0) {
 		fprintf(stderr, "myserver ~ process_write_req(): encountered error while accepting client %u.\n", client_id);
 		return -1;
 	}
@@ -190,7 +217,7 @@ int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr
 // if payload size == 0, terminate client connection
 // if client unrecognized, don't do anything
 // return 0 on success, -1 on error
-int process_data_pkt(char *pkt_buf, struct client_info **clients, uint32_t *max_client_count, uint32_t *lowest_unackd_sn) {
+int process_data_pkt(char *pkt_buf, struct client_info **clients, uint32_t *max_client_count) {
 	// if payload size == 0: terminate connection
 	// if pkt in client ooo buffer, write to file based on that
 	// else write to end of file
@@ -208,11 +235,6 @@ int process_data_pkt(char *pkt_buf, struct client_info **clients, uint32_t *max_
 
 	if (pkt_buf == NULL) {
 		fprintf(stderr, "myserver ~ process_data_pkt(): invalid ptr passed to pkt_buf parameter.\n");
-		return -1;
-	}
-
-	if (lowest_unackd_sn == NULL) {
-		fprintf(stderr, "myserver ~ process_data_pkt(): null ptr passed to lowest_unackd_sn.\n");
 		return -1;
 	}
 
@@ -244,8 +266,8 @@ int process_data_pkt(char *pkt_buf, struct client_info **clients, uint32_t *max_
 		return -1;
 	}
 
-	if (*lowest_unackd_sn == pkt_sn) {
-		(*lowest_unackd_sn)++;
+	if (client->lowest_unackd_sn == pkt_sn) {
+		client->lowest_unackd_sn++;
 	}
 
 	// get payload size, terminate client connection if == 0

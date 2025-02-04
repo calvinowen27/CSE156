@@ -205,6 +205,32 @@ int assign_pkt_client_id(char *pkt_buf, uint32_t client_id) {
 	return 0;
 }
 
+// assign ack sn to header bytes of pkt_buf
+// return 0 on success, -1 on error
+int assign_ack_sn(char *pkt_buf, uint32_t sn) {
+	if (pkt_buf == NULL) {
+		fprintf(stderr, "utils ~ assign_ack_sn(): cannot pass NULL ptr to pkt_buf.\n");
+		return -1;
+	}
+
+	uint8_t *bytes = split_bytes(sn);
+
+	if (bytes == NULL) {
+		fprintf(stderr, "utils ~ assign_ack_sn(): something went wrong when splitting bytes of client_id.\n");
+		return -1;
+	}
+	
+	// client_id goes right after opcode (1)
+	pkt_buf[1] = bytes[0];
+	pkt_buf[2] = bytes[1];
+	pkt_buf[3] = bytes[2];
+	pkt_buf[4] = bytes[3];
+
+	free(bytes);
+
+	return 0;
+}
+
 // assign pkt_sn to header bytes of pkt_buf
 // return 0 on success, -1 on error
 int assign_pkt_sn(char *pkt_buf, uint32_t pkt_sn) {

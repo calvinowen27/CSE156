@@ -40,6 +40,10 @@ int assign_pkt_opcode(char *pkt_buf, int opcode);
 // return 0 on success, -1 on error
 int assign_pkt_client_id(char *pkt_buf, uint32_t client_id);
 
+// assign ack sn to header bytes of pkt_buf
+// return 0 on success, -1 on error
+int assign_ack_sn(char *pkt_buf, uint32_t sn);
+
 // assign pkt_sn to header bytes of pkt_buf
 // return 0 on success, -1 on error
 int assign_pkt_sn(char *pkt_buf, uint32_t pkt_sn);

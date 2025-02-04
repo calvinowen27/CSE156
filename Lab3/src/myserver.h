@@ -14,4 +14,10 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size);
 // return 0 on success, -1 on error
 int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, char *pkt_buf, struct client_info **clients, uint32_t *max_client_count, uint32_t client_id);
 
+// perform writing actions from a data pkt sent by known client
+// if payload size == 0, terminate client connection
+// if client unrecognized, don't do anything
+// return 0 on success, -1 on error
+int process_data_pkt(char *pkt_buf, struct client_info **clients, uint32_t *max_client_count);
+
 #endif
