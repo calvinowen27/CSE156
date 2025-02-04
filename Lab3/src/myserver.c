@@ -31,7 +31,7 @@ int main(int argc, char **argv) {
 	}
 
 	int droppc = atoi(argv[2]);
-	if (droppc < 0 || port > 100) {
+	if (droppc < 0 || droppc > 100) {
 		printf("Invalid droppc provided. Please provide a drop percentage between 0-100.\n");
 		exit(1);
 	}
