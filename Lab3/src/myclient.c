@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <regex.h>
+#include <time.h>
 
 #include "myclient.h"
 #include "utils.h"
@@ -140,16 +141,18 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 		if (reached_eof) break;
 
 		// update pkt info with ack
-		for (uint32_t sn = 0; sn < pkts_sent; sn++) {
+		for (uint32_t sn = 0; sn < winsz; sn++) {
 			struct pkt_ack_info *pkt = &pkt_info[sn];
 			if (pkt->active) {
-				if (sn >= start_pkt_sn || sn <= ack_pkt_sn) {
+				if ((ack_pkt_sn > start_pkt_sn && sn >= start_pkt_sn && sn <= ack_pkt_sn) || (ack_pkt_sn < start_pkt_sn && (sn >= start_pkt_sn || sn <= ack_pkt_sn))) {
 					pkt->ackd = true;
 					pkt->active = false;
+					printf("PKT %u ACKD\n", sn);
 				} else if (pkt->retransmits > 3) {
 					fprintf(stderr, "myclient ~ send_file(): exceeded 3 retransmits for a single packet.\n");
 					exit(1); // TODO: make sure this is the right exit code for failure/too many retransmissions
 				} else {
+					printf("PKT %u NOT ACKD\n", sn);
 					need_pkt_resend = true;
 				}
 			}
@@ -188,6 +191,11 @@ int perform_handshake(int sockfd, const char *outfile_path, struct sockaddr *soc
 			fprintf(stderr, "myclient ~ perform_handshake(): client failed to send WR pkt to server.\n");
 			return -1;
 		}
+
+		if (log_pkt(handshake_buf) < 0) {
+			fprintf(stderr, "myclient ~ perform_handshake(): encountered error logging pkt info.\n");
+			return -1;
+		}
 	} while ((recv_res = recv_server_response(sockfd, sockaddr, sockaddr_size, client_id)) == 1);
 
 	if (recv_res < 0) {
@@ -212,18 +220,18 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 
 		if (pkt->ackd) {
 			pkt->retransmits = 0;
+			pkt->active = false;
+			pkt->ackd = false;
 		} else if (pkt->active) {
 			pkt->retransmits ++;
 		}
-
-		pkt->active = false;
-		pkt->ackd = false;
 	}
 
 	// check start pkt for ack, if no ack, go back to file idx
 	struct pkt_ack_info *pkt = &pkt_info[start_pkt_sn];
 	if (!pkt->ackd && pkt->active) {
 		lseek(infd, pkt->file_idx, SEEK_SET);
+		printf("PKT %u RETRANSMIT\n", start_pkt_sn);
 	}
 
 	uint32_t pyld_sz;
@@ -237,6 +245,7 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 	while (pkts_sent < winsz && !eof_reached) { // only send max winsz packets
 		pkt = &pkt_info[pkt_sn];
 		pkt->file_idx = lseek(infd, 0, SEEK_CUR);
+
 		pkt->active = true;
 		pkt->ackd = false;
 
@@ -263,10 +272,13 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 		// assign payload size
 		assign_pkt_pyld_sz(pkt_buf, pyld_sz);
 
-		printf("Sending DATA %u.\n", pkt_sn);
-
 		if (sendto(sockfd, pkt_buf, DATA_HEADER_SIZE + pyld_sz, 0, sockaddr, *sockaddr_size) < 0) {
 			fprintf(stderr, "myclient ~ send_window_pkts(): client failed to send packet to server.\n");
+			return -1;
+		}
+
+		if (log_pkt(pkt_buf) < 0) {
+			fprintf(stderr, "myclient ~ send_window_pkts(): encountered error logging pkt info.\n");
 			return -1;
 		}
 
@@ -301,6 +313,11 @@ int recv_server_response(int sockfd, struct sockaddr *sockaddr, socklen_t *socka
 
 	if (select(sockfd + 1, &fds, NULL, NULL, &timeout) > 0) { // check there is data to be read from socket
 		if ((bytes_recvd = recvfrom(sockfd, pkt_buf, sizeof(pkt_buf), 0, sockaddr, sockaddr_size)) >= 0) {
+			if (log_pkt(pkt_buf) < 0) {
+				fprintf(stderr, "myclient ~ send_window_pkts(): encountered error logging pkt info.\n");
+				return -1;
+			}
+			
 			// recvfrom success
 			int opcode = get_pkt_opcode(pkt_buf);
 			switch (opcode) {
@@ -317,7 +334,7 @@ int recv_server_response(int sockfd, struct sockaddr *sockaddr, socklen_t *socka
 					fprintf(stderr, "myclient ~ recv_server_response(): unrecognized opcode received from server: %d.\n", opcode);
 					return -1;
 					break;
-			};			
+			};
 		} else { // recvfrom failed
 			fprintf(stderr, "myclient ~ recv_server_response(): an error occured while receiving data from server.\n");
 			fprintf(stderr, "%s\n", strerror(errno));
@@ -326,9 +343,37 @@ int recv_server_response(int sockfd, struct sockaddr *sockaddr, socklen_t *socka
 	} else { // after timeout
 		// TODO: retransmit pkt window since we didn't hear back from the server, keep track of retransmits per pkt
 		//		also make sure to update the error message V V V
-		fprintf(stderr, "myclient ~ recv_server_response(): no server response. Here we should resend pkt window (not implemented).\n");
+		fprintf(stderr, "myclient ~ recv_server_response(): No server response. Retrying.\n");
 		return 1;
 	}
+
+	return 0;
+}
+
+int log_pkt(char *pkt_buf) {
+	time_t t = time(NULL);
+	struct tm *tm = gmtime(&t);
+
+	uint32_t opcode = get_pkt_opcode(pkt_buf);
+	if (opcode == 0) {
+		fprintf(stderr, "myclient ~ log_pkt(): encountered error getting opcode from pkt.\n");
+		return -1;
+	}
+
+	if (opcode < OP_WR || opcode > OP_DATA) {
+		fprintf(stderr, "myclient ~ log_pkt(): opcode %u is not supported by server.\n", opcode);
+		return -1;
+	}
+
+	char *opstring = opcode == OP_ACK ? "ACK" : "DATA";
+
+	uint32_t sn = opcode == OP_WR ? 0 : (opcode == OP_ACK ? get_ack_sn(pkt_buf) : get_data_sn(pkt_buf));
+	if (sn == 0 && errno == EDEVERR) {
+		fprintf(stderr, "myclient ~ log_pkt(): encountered an error getting pkt sn from pkt.\n");
+		return -1;
+	}
+
+	printf("%d-%02d-%02dT%02d:%02d:%02dZ, %s, %u\n", tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec, opstring, sn);
 
 	return 0;
 }

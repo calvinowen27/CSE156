@@ -20,4 +20,6 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 // return 0 on success, -1 on error
 int recv_server_response(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, uint32_t *ack_pkt_sn);
 
+int log_pkt(char *pkt_buf);
+
 #endif

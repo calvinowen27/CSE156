@@ -56,6 +56,8 @@ int main(int argc, char **argv) {
 	return 0;
 }
 
+// TODO: make sure WR pkt outfile path works with low mss
+
 // run server: accept pkts and send acks for highest pkt sn from client during breaks
 // this function will run forever once called, or until there is an error (returns -1)
 int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int droppc) {
@@ -155,7 +157,7 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int dro
 	for (uint32_t i = 0; i < max_client_count; i++) {
 		// free(clients[i].ooo_file_idxs);
 		// free(clients[i].ooo_pkt_sns);
-		free(clients[i].ooo_pkts);
+		free(clients[i].pkt_win);
 	}
 
 	free(pkt_buf);
@@ -169,29 +171,39 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int dro
 int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int droppc) {
 	// find first unackd pkt
 	uint32_t pkts_counted = 0;
-	client->first_unackd_sn = client->expected_start_sn;
+	client->first_unwritten_sn = client->expected_start_sn;
+	struct pkt_info *pkt;
 	while (pkts_counted < client->winsz) {
-		if (!client->ooo_pkts[client->first_unackd_sn].ackd) {
+		pkt = &client->pkt_win[client->first_unwritten_sn];
+		// fprintf(stderr, "pkt %u written: %s\n", client->first_unwritten_sn, pkt->written ? "true" : "false");
+		
+		if (!pkt->written) {
 			break;
 		}
 
-		client->first_unackd_sn ++;
+		if (pkt->seen && pkt->written) {
+			pkt->seen = false;
+		}
 
-		if (client->first_unackd_sn == client->winsz) client->first_unackd_sn = 0;
+		pkt->written = false;
+
+		client->first_unwritten_sn ++;
+
+		if (client->first_unwritten_sn == client->winsz) client->first_unwritten_sn = 0;
 
 		pkts_counted ++;
 	}
 
-	client->expected_start_sn = client->first_unackd_sn;
+	client->expected_start_sn = client->first_unwritten_sn;
 
 	// next expected is first unackd
 	client->expected_sn = client->expected_start_sn;
 
 	char ack_buf[5];
 	ack_buf[0] = OP_ACK;
-	uint32_t ack_sn = client->first_unackd_sn == 0 ? client->winsz - 1 : client->first_unackd_sn - 1;
+	uint32_t ack_sn = client->first_unwritten_sn == 0 ? client->winsz - 1 : client->first_unwritten_sn - 1;
 	if (assign_ack_sn(ack_buf, ack_sn) < 0) {
-		fprintf(stderr, "myserver ~ send_client_ack(): encountered an error assigning client %u lowest sn %u to ack buf.\n", client->id, client->first_unackd_sn);
+		fprintf(stderr, "myserver ~ send_client_ack(): encountered an error assigning client %u lowest sn %u to ack buf.\n", client->id, client->first_unwritten_sn);
 		return -1;
 	}
 
@@ -200,7 +212,7 @@ int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int 
 
 		return 0;
 	} else if (sendto(sockfd, ack_buf, 5, 0, client->sockaddr, *client->sockaddr_size) < 0) {
-		fprintf(stderr, "myserver ~ send_client_ack(): encountered an error sending ack to client %u with sn %u.\n", client->id, client->first_unackd_sn);
+		fprintf(stderr, "myserver ~ send_client_ack(): encountered an error sending ack to client %u with sn %u.\n", client->id, client->first_unwritten_sn);
 		return -1;
 	}
 
@@ -321,8 +333,8 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, ui
 		return -1;
 	}
 
-	if (client->first_unackd_sn == pkt_sn) {
-		client->first_unackd_sn++;
+	if (client->first_unwritten_sn == pkt_sn) {
+		client->first_unwritten_sn++;
 	}
 
 	// get payload size, terminate client connection if == 0xffffffff
@@ -346,23 +358,73 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, ui
 	}
 
 	// if we've made it to here, everything is valid and client is writing data to file
+	struct pkt_info *pkt = &client->pkt_win[pkt_sn];
 
 	// write based on sn, check for ooo
 	if (pkt_sn == client->expected_sn) { // normal, write bytes to outfile
+		if (pkt->seen && !pkt->written) {
+			lseek(client->outfd, pkt->file_idx, SEEK_SET);
+			// printf("\nShift");
+
+			// if (shift_file_contents(client->outfd, pkt->file_idx, pyld_sz) < 0) {
+			// 	fprintf(stderr, "myserver ~ process_data_pkt(): encountered error shifting file contents for OOO write.\n");
+			// 	return -1;
+			// }
+		} else {
+			pkt->file_idx = lseek(client->outfd, 0, SEEK_END);
+		}
+
+		pkt->seen = true;
+
 		if (write_n_bytes(client->outfd, pkt_buf + DATA_HEADER_SIZE, pyld_sz) < 0) {
 			fprintf(stderr, "myserver ~ process_data_pkt(): encountered error writing bytes to outfile: %s.\n", strerror(errno));
 			return -1;
 		}
 
-		client->expected_sn = pkt_sn + 1;
-	} else if (pkt_sn > client->expected_sn) { // pkt received before expected, update ooo buffer and write to end of file
-		// store all pkts between expected_sn and pkt_sn in ooo_buffer
-		for (uint32_t sn = client->expected_sn; sn < pkt_sn; sn++) {
+		pkt->written = true;
+
+		printf("\nExpected");
+		printf("\nWRITE:\tsn %u\n%s\n@ %lld\n", pkt_sn, pkt_buf + DATA_HEADER_SIZE, pkt->file_idx);
+
+		uint32_t sn = pkt_sn + 1;
+		if (sn == client->winsz) sn = 0;
+		while (sn != client->expected_start_sn) {
 			// save ooo pkt to buffer at current file location
-			struct ooo_pkt *ooo_pkt = &client->ooo_pkts[sn];
-			ooo_pkt->ackd = false;
-			ooo_pkt->file_idx = lseek(client->outfd, 0, SEEK_END);
+			pkt = &client->pkt_win[sn];
+			if (pkt->seen && !pkt->written && pkt->file_idx == client->pkt_win[pkt_sn].file_idx) {
+				pkt->file_idx = lseek(client->outfd, 0, SEEK_CUR);
+			}
+
+			sn ++;
+			if (sn == client->winsz) sn = 0;
 		}
+
+		pkt = &client->pkt_win[sn];
+		pkt->file_idx = lseek(client->outfd, 0, SEEK_END);
+
+		client->expected_sn = pkt_sn + 1;
+	} else if ((pkt_sn > client->expected_sn && pkt_sn > client->expected_start_sn) || (pkt_sn < client->expected_sn && pkt_sn < client->expected_start_sn) || (pkt_sn < client->expected_start_sn && pkt_sn > client->expected_sn)) {
+	//} else if (pkt_sn > client->expected_sn || (pkt_sn < client->expected_sn && pkt_sn < client->expected_start_sn)) { // pkt received before expected, update ooo buffer and write to end of file
+		pkt->seen = true;
+
+		// store all pkts between expected_sn and pkt_sn in ooo_buffer
+		uint32_t sn = client->expected_sn;
+		while (sn != pkt_sn) {
+			// save ooo pkt to buffer at current file location
+			pkt = &client->pkt_win[sn];
+			if (!pkt->seen) {
+				pkt->file_idx = lseek(client->outfd, 0, SEEK_END);
+			}
+
+			pkt->seen = true;
+			pkt->written = false;
+
+			sn ++;
+			if (sn == client->winsz) sn = 0;
+		}
+
+		pkt = &client->pkt_win[sn];
+		pkt->file_idx = lseek(client->outfd, 0, SEEK_END);
 
 		// write bytes of current pkt to end of file
 		if (write_n_bytes(client->outfd, pkt_buf + DATA_HEADER_SIZE, pyld_sz) < 0) {
@@ -370,13 +432,17 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, ui
 			return -1;
 		}
 
+		pkt->written = true;
+
+		printf("\nUNexpected");
+		printf("\nWRITE:\tsn %u\n%s\n@ %lld\n", pkt_sn, pkt_buf + DATA_HEADER_SIZE, pkt->file_idx);
+
 		client->expected_sn = pkt_sn + 1;
-	} else { // pkt received late, write based on ooo buffer
-		struct ooo_pkt *ooo_pkt = &client->ooo_pkts[pkt_sn];
-		ooo_pkt->ackd = true;
-		
+	} else { // pkt received late, write based on ooo buffer		
 		// go to correct location in outfile
-		off_t file_idx = lseek(client->outfd, ooo_pkt->file_idx, SEEK_SET);
+		off_t file_idx = lseek(client->outfd, pkt->file_idx, SEEK_SET);
+
+		pkt->seen = true;
 
 		if (shift_file_contents(client->outfd, file_idx, pyld_sz) < 0) {
 			fprintf(stderr, "myserver ~ process_data_pkt(): encountered error shifting file contents for OOO write.\n");
@@ -387,6 +453,20 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, ui
 		if (write_n_bytes(client->outfd, pkt_buf + DATA_HEADER_SIZE, pyld_sz) < 0) {
 			fprintf(stderr, "myserver ~ process_data_pkt(): encountered error writing bytes to outfile: %s\n", strerror(errno));
 			return -1;
+		}
+
+		pkt->written = true;
+
+		printf("\nLate");
+		printf("\nWRITE:\tsn %u\n%s\n@ %lld\n", pkt_sn, pkt_buf + DATA_HEADER_SIZE, pkt->file_idx);
+
+		// adjust rest of ooo pkt file idxs
+		for (uint32_t sn = 0; sn < client->winsz; sn++) {
+			pkt = &client->pkt_win[sn];
+
+			if (pkt->file_idx == file_idx && pkt->seen && !pkt->written) {
+				pkt->file_idx = lseek(client->outfd, 0, SEEK_CUR);
+			}
 		}
 	}
 
