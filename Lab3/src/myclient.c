@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 #include <regex.h>
 #include <time.h>
+#include <sys/errno.h>
 
 #include "myclient.h"
 #include "utils.h"
@@ -110,7 +111,7 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 
 	// need to resend pkts if ack sn < last pkt sn sent
 	// send pkts from ack sn + 1
-	uint32_t pkts_sent;
+	int pkts_sent;
 
 	struct pkt_ack_info pkt_info[winsz];
 	reset_pkt_info(pkt_info, winsz);
