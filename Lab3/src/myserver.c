@@ -656,6 +656,7 @@ int process_outfile_path_pkt(int sockfd, char *pkt_buf, struct client_info *clie
 	}
 
 	if (pkt_buf[DATA_HEADER_SIZE + pyld_sz - 1] == 0) {
+		printf("done getting outfile path: %s\n", client->outfile_path);
 		client->outfile_path_done = true;
 		// create outfile directories if necessary
 		if (create_file_directory(client->outfile_path) < 0) {
