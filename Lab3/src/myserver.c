@@ -224,8 +224,6 @@ int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int 
 // initialize client connection with outfile and next client_id, send response to client with client_id
 // return 0 on success, -1 on error
 int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, char *pkt_buf, struct client_info **clients, u_int32_t *max_client_count, u_int32_t client_id) {
-	printf("process wr.\n");
-	
 	if (clients == NULL || *clients == NULL) {
 		fprintf(stderr, "myserver ~ process_write_req(): invalid ptr passed to clients parameter.\n");
 		return -1;
@@ -323,9 +321,7 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, u_
 		return 0;
 	}
 
-	printf("process data.\n");
 	if (!client->outfile_path_done) {
-		printf("outfile path.\n");
 		if (process_outfile_path_pkt(sockfd, pkt_buf, client, pkts_sent, droppc) < 0) {
 			fprintf(stderr, "myserver ~ process_data_pkt(): encountered error processing outfile path pkt.\n");
 			return 0;
@@ -488,8 +484,6 @@ int process_outfile_path_pkt(int sockfd, char *pkt_buf, struct client_info *clie
 	// if pkt in client ooo buffer, write to file based on that
 	// else write to end of file
 	// if client unrecognized, idk don't do it
-
-	printf("process outfile path: %s\n", client->outfile_path);
 
 	if (client == NULL) {
 		fprintf(stderr, "myserver ~ process_outfile_path_pkt(): invalid ptr passed to client parameter.\n");
@@ -656,7 +650,6 @@ int process_outfile_path_pkt(int sockfd, char *pkt_buf, struct client_info *clie
 	}
 
 	if (pkt_buf[DATA_HEADER_SIZE + pyld_sz - 1] == 0) {
-		printf("done getting outfile path: %s\n", client->outfile_path);
 		client->outfile_path_done = true;
 		// create outfile directories if necessary
 		if (create_file_directory(client->outfile_path) < 0) {
@@ -666,6 +659,11 @@ int process_outfile_path_pkt(int sockfd, char *pkt_buf, struct client_info *clie
 		client->outfd = open(client->outfile_path, O_CREAT | O_TRUNC | O_RDWR, 0664);
 		if (client->outfd < 0) {
 			fprintf(stderr, "myserver ~ process_outfile_path_pkt(): failed to open outfile_path %s.\n", client->outfile_path);
+		}
+
+		if (send_client_ack(client, sockfd, pkts_sent, droppc) < 0) {
+			fprintf(stderr, "myserver ~ process_outfile_path_pkt(): encountered error sending ack to client.\n");
+			return -1;
 		}
 	}
 
@@ -694,7 +692,7 @@ int drop_pkt(char *pkt_buf, int pkt_count, int droppc) {
 		return -1;
 	}
 
-	char *opstring = opcode == OP_ACK ? "DROP ACK" : (OP_WR ? "DROP CTRL" : "DROP DATA");
+	char *opstring = opcode == OP_ACK ? "DROP ACK" : (opcode == OP_WR ? "DROP CTRL" : "DROP DATA");
 
 	u_int32_t sn = opcode == OP_WR ? 0 : (opcode == OP_ACK ? get_ack_sn(pkt_buf) : get_data_sn(pkt_buf));
 	if (sn == 0 && errno == 1) {

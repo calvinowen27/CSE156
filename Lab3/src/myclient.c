@@ -129,6 +129,8 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 				fprintf(stderr, "myclient ~ send_file(): encountered an error while sending pkt window.\n");
 				return -1;
 			}
+
+			reached_eof = pkts_sent == 0; // update reached_eof
 		} else {
 			// send window for outfile path
 			if ((pkts_sent = send_outfile_path(outfile_path, &outfile_idx, sockfd, sockaddr, sockaddr_size, mss, winsz, client_id, start_pkt_sn, pkt_info)) < 0) {
@@ -139,8 +141,6 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 				reset_pkt_info(pkt_info, winsz);
 			}
 		}
-
-		reached_eof = pkts_sent == 0 && outfile_path_done; // update reached_eof
 
 		// wait for server response, to get ack sn
 		if (recv_server_response(sockfd, sockaddr, sockaddr_size, &ack_pkt_sn) < 0) {
@@ -474,7 +474,7 @@ int log_pkt(char *pkt_buf) {
 		return -1;
 	}
 
-	char *opstring = opcode == OP_ACK ? "ACK" : (OP_WR ? "CTRL" : "DATA");
+	char *opstring = opcode == OP_ACK ? "ACK" : (opcode == OP_WR ? "CTRL" : "DATA");
 
 	u_int32_t sn = opcode == OP_WR ? 0 : (opcode == OP_ACK ? get_ack_sn(pkt_buf) : get_data_sn(pkt_buf));
 	if (sn == 0 && errno == 1) {
