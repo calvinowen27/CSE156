@@ -24,6 +24,9 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, ui
 // return 0 on success, -1 on error
 int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int droppc);
 
+// determines wether to drop a pkt based on pkt_count
+// prints log message if pkt is dropped
+// returns 1 if true, 0 if false
 int drop_pkt(char *pkt_buf, int pkt_count, int droppc);
 
 #endif

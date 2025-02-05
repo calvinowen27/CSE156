@@ -471,6 +471,9 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, ui
 	return 0;
 }
 
+// determines wether to drop a pkt based on pkt_count
+// prints log message if pkt is dropped
+// returns 1 if true, 0 if false
 int drop_pkt(char *pkt_buf, int pkt_count, int droppc) {
 	if ((pkt_count % 100) + 1 > droppc) {
 		return 0;
@@ -490,7 +493,7 @@ int drop_pkt(char *pkt_buf, int pkt_count, int droppc) {
 		return -1;
 	}
 
-	char *opstring = opcode == OP_ACK ? "DROP ACK" : "DROP DATA";
+	char *opstring = opcode == OP_ACK ? "DROP ACK" : (OP_WR ? "DROP CTRL" : "DROP DATA");
 
 	uint32_t sn = opcode == OP_WR ? 0 : (opcode == OP_ACK ? get_ack_sn(pkt_buf) : get_data_sn(pkt_buf));
 	if (sn == 0 && errno == EDEVERR) {

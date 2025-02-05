@@ -347,6 +347,8 @@ int recv_server_response(int sockfd, struct sockaddr *sockaddr, socklen_t *socka
 	return 0;
 }
 
+// prints log message of pkt
+// returns 0 on success, -1 on error
 int log_pkt(char *pkt_buf) {
 	time_t t = time(NULL);
 	struct tm *tm = gmtime(&t);
@@ -362,7 +364,7 @@ int log_pkt(char *pkt_buf) {
 		return -1;
 	}
 
-	char *opstring = opcode == OP_ACK ? "ACK" : "DATA";
+	char *opstring = opcode == OP_ACK ? "ACK" : (OP_WR ? "CTRL" : "DATA");
 
 	uint32_t sn = opcode == OP_WR ? 0 : (opcode == OP_ACK ? get_ack_sn(pkt_buf) : get_data_sn(pkt_buf));
 	if (sn == 0 && errno == EDEVERR) {
