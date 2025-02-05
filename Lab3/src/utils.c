@@ -420,8 +420,6 @@ uint32_t get_ack_sn(char *pkt_buf) {
 		return 0;
 	}
 
-	uint32_t res;
-
 	// pkt_sn occurs right after opcode for ack, not at all for error
 	// check opcode for ack, otherwise return 0
 	if ((int)pkt_buf[0] == OP_ACK) {
