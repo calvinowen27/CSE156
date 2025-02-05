@@ -49,4 +49,6 @@ int client_info_init(struct client_info *client, u_int32_t client_id, char *outf
 // return 0 on success, -1 on error
 int terminate_client(struct client_info **clients, u_int32_t *max_client_count, u_int32_t client_id);
 
+void reset_pkt_info(struct client_info *client);
+
 #endif

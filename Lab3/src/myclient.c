@@ -97,7 +97,7 @@ int main(int argc, char **argv) {
 // send file from fd to sockfd, also using sockaddr
 // return 0 on success, -1 on error
 int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int mss, u_int32_t winsz) {
-	u_int32_t client_id, start_pkt_sn = 0, ack_pkt_sn = -1;
+	u_int32_t client_id, start_pkt_sn = 0, ack_pkt_sn = 0;
 
 	// initiate handshake with WR and outfile path
 	if (perform_handshake(sockfd, outfile_path, sockaddr, sockaddr_size, &client_id, winsz) < 0) {
@@ -118,6 +118,7 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 
 	bool outfile_path_done = false;
 	int outfile_idx = 0;
+	int res;
 
 	// continue while eof hasn't been reached or pkts need to be resent
 	while (!reached_eof || need_pkt_resend) {
@@ -136,16 +137,19 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 			if ((pkts_sent = send_outfile_path(outfile_path, &outfile_idx, sockfd, sockaddr, sockaddr_size, mss, winsz, client_id, start_pkt_sn, pkt_info)) < 0) {
 				fprintf(stderr, "myclient ~ send_file(): encountered an error while sending pkt window.\n");
 				return -1;
-			} else if (pkts_sent == 0) {
-				outfile_path_done = true;
-				reset_pkt_info(pkt_info, winsz);
 			}
 		}
 
 		// wait for server response, to get ack sn
-		if (recv_server_response(sockfd, sockaddr, sockaddr_size, &ack_pkt_sn) < 0) {
+		if ((res = recv_server_response(sockfd, sockaddr, sockaddr_size, &ack_pkt_sn)) < 0) {
 			fprintf(stderr, "myclient ~ send_file(): encourntered an error while trying to receive server response.\n");
 			return -1;
+		} else if (res == 0 && !outfile_path_done) {
+			outfile_path_done = true;
+			reset_pkt_info(pkt_info, winsz);
+			continue;
+		} else if (res == 1) {
+			continue;
 		}
 
 		if (reached_eof) break;
@@ -416,7 +420,7 @@ int send_outfile_path(const char *outfile_path, int *path_idx, int sockfd, struc
 		}
 		
 		// assign opcode
-		assign_pkt_opcode(pkt_buf, OP_DATA);	// assign WR for logging, change to DATA later
+		assign_pkt_opcode(pkt_buf, OP_PATH);
 
 		// assign client ID
 		assign_pkt_client_id(pkt_buf, client_id);
@@ -433,7 +437,7 @@ int send_outfile_path(const char *outfile_path, int *path_idx, int sockfd, struc
 		}
 
 		// assign opcode
-		assign_pkt_opcode(pkt_buf, OP_WR);
+		assign_pkt_opcode(pkt_buf, OP_WR);	// reassign for logging
 
 		if (log_pkt(pkt_buf) < 0) {
 			fprintf(stderr, "myclient ~ send_outfile_path(): encountered error logging pkt info.\n");

@@ -215,3 +215,22 @@ int terminate_client(struct client_info **clients, u_int32_t *max_client_count, 
 
 	return 0;
 }
+
+void reset_pkt_info(struct client_info *client) {
+	if (client == NULL) {
+		fprintf(stderr, "myserver ~ reset_pkt_info(): cannot pass NULL to client argument.\n");
+	}
+
+	client->first_unwritten_sn = 0;
+	client->expected_sn = 0;
+
+	struct pkt_info *pkt;
+
+	for (u_int32_t sn = 0; sn < client->winsz; sn++) {
+		pkt = &client->pkt_win[sn];
+
+		pkt->file_idx = 0;
+		pkt->seen = false;
+		pkt->written = false;
+	}
+}

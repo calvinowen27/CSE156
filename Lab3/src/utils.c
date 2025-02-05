@@ -351,7 +351,7 @@ u_int32_t get_data_client_id(char *pkt_buf) {
 
 	// pkt_sn occurs right after opcode for ack, not at all for error
 	// check opcode for ack, otherwise return 0
-	if ((int)pkt_buf[0] == OP_DATA) {
+	if ((int)pkt_buf[0] == OP_DATA || (int)pkt_buf[0] == OP_PATH) {
 		u_int8_t bytes[4];
 		bytes[0] = pkt_buf[1];
 		bytes[1] = pkt_buf[2];
@@ -374,7 +374,7 @@ u_int32_t get_data_sn(char *pkt_buf) {
 
 	// pkt_sn occurs right after opcode for ack, not at all for error
 	// check opcode for ack, otherwise return 0
-	if ((int)pkt_buf[0] == OP_DATA) {
+	if ((int)pkt_buf[0] == OP_DATA || (int)pkt_buf[0] == OP_PATH) {
 		u_int8_t bytes[4];
 		bytes[0] = pkt_buf[5];
 		bytes[1] = pkt_buf[6];
@@ -398,7 +398,7 @@ u_int32_t get_data_pyld_sz(char *pkt_buf) {
 
 	// pkt_sn occurs right after opcode for ack, not at all for error
 	// check opcode for ack, otherwise return 0
-	if ((int)pkt_buf[0] == OP_DATA) {
+	if ((int)pkt_buf[0] == OP_DATA || (int)pkt_buf[0] == OP_PATH) {
 		u_int8_t bytes[4];
 		bytes[0] = pkt_buf[9];
 		bytes[1] = pkt_buf[10];
@@ -422,7 +422,7 @@ u_int32_t get_ack_sn(char *pkt_buf) {
 
 	// pkt_sn occurs right after opcode for ack, not at all for error
 	// check opcode for ack, otherwise return 0
-	if ((int)pkt_buf[0] == OP_ACK) {
+	if ((int)pkt_buf[0] == OP_ACK || (int)pkt_buf[0] == OP_WR) {
 		u_int8_t bytes[4];
 		bytes[0] = pkt_buf[1];
 		bytes[1] = pkt_buf[2];

@@ -17,5 +17,6 @@ enum OPCODES {
 				OP_WR = 1,		// write request
 				OP_ACK = 2,		// acknowledgment
 				OP_DATA = 3,	// data included
-				OP_ERROR = 4	// error
+				OP_ERROR = 4,	// error
+				OP_PATH = 5
 			};
