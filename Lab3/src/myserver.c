@@ -15,7 +15,6 @@
 #include "protocol.h"
 #include "client_info.h"
 
-// #define IP_ADDR "127.0.0.1"
 #define BUFFER_SIZE 65535
 
 int main(int argc, char **argv) {
@@ -218,8 +217,6 @@ int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int 
 
 	(*pkts_sent) ++;
 	
-	// client->ack_sent = true;
-
 	return 0;
 }
 
