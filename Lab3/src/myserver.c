@@ -343,7 +343,7 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, ui
 		fprintf(stderr, "myserver ~ process_data_pkt(): encountered an error getting payload size from data pkt.\n");
 		return -1;
 	} else if (pyld_sz == 0) {
-		printf("myserver ~ Payload size of 0 encountered. Terminating connection with client %u.\n", client_id);
+		fprintf(stderr, "myserver ~ Payload size of 0 encountered. Terminating connection with client %u.\n", client_id);
 		if (send_client_ack(client, sockfd, pkts_sent, droppc) < 0) {
 			fprintf(stderr, "myserver ~ process_data_pkt(): encountered error sending final ack to client.\n");
 			return -1;
@@ -364,12 +364,6 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, ui
 	if (pkt_sn == client->expected_sn) { // normal, write bytes to outfile
 		if (pkt->seen && !pkt->written) {
 			lseek(client->outfd, pkt->file_idx, SEEK_SET);
-			// printf("\nShift");
-
-			// if (shift_file_contents(client->outfd, pkt->file_idx, pyld_sz) < 0) {
-			// 	fprintf(stderr, "myserver ~ process_data_pkt(): encountered error shifting file contents for OOO write.\n");
-			// 	return -1;
-			// }
 		} else {
 			pkt->file_idx = lseek(client->outfd, 0, SEEK_END);
 		}
@@ -382,9 +376,6 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, ui
 		}
 
 		pkt->written = true;
-
-		printf("\nExpected");
-		printf("\nWRITE:\tsn %u\n%s\n@ %lld\n", pkt_sn, pkt_buf + DATA_HEADER_SIZE, pkt->file_idx);
 
 		uint32_t sn = pkt_sn + 1;
 		if (sn == client->winsz) sn = 0;
@@ -434,9 +425,6 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, ui
 
 		pkt->written = true;
 
-		printf("\nUNexpected");
-		printf("\nWRITE:\tsn %u\n%s\n@ %lld\n", pkt_sn, pkt_buf + DATA_HEADER_SIZE, pkt->file_idx);
-
 		client->expected_sn = pkt_sn + 1;
 	} else { // pkt received late, write based on ooo buffer		
 		// go to correct location in outfile
@@ -456,9 +444,6 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, ui
 		}
 
 		pkt->written = true;
-
-		printf("\nLate");
-		printf("\nWRITE:\tsn %u\n%s\n@ %lld\n", pkt_sn, pkt_buf + DATA_HEADER_SIZE, pkt->file_idx);
 
 		// adjust rest of ooo pkt file idxs
 		for (uint32_t sn = 0; sn < client->winsz; sn++) {

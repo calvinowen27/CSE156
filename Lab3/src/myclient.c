@@ -147,12 +147,10 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 				if ((ack_pkt_sn > start_pkt_sn && sn >= start_pkt_sn && sn <= ack_pkt_sn) || (ack_pkt_sn < start_pkt_sn && (sn >= start_pkt_sn || sn <= ack_pkt_sn))) {
 					pkt->ackd = true;
 					pkt->active = false;
-					printf("PKT %u ACKD\n", sn);
 				} else if (pkt->retransmits > 3) {
 					fprintf(stderr, "myclient ~ send_file(): exceeded 3 retransmits for a single packet.\n");
 					exit(1); // TODO: make sure this is the right exit code for failure/too many retransmissions
 				} else {
-					printf("PKT %u NOT ACKD\n", sn);
 					need_pkt_resend = true;
 				}
 			}
@@ -184,7 +182,7 @@ int perform_handshake(int sockfd, const char *outfile_path, struct sockaddr *soc
 	int recv_res = 1;
 
 	do {
-		printf("Initial write request packet sent.\n");
+		fprintf(stderr, "Initial write request packet sent.\n");
 
 		// send WR to server
 		if (sendto(sockfd, handshake_buf, sizeof(handshake_buf), 0, sockaddr, *sockaddr_size) < 0) {
@@ -203,7 +201,7 @@ int perform_handshake(int sockfd, const char *outfile_path, struct sockaddr *soc
 		return -1;
 	}
 
-	printf("Connection confirmed by server.\n");
+	fprintf(stderr, "Connection confirmed by server.\n");
 
 	return 0;
 }
@@ -231,7 +229,6 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 	struct pkt_ack_info *pkt = &pkt_info[start_pkt_sn];
 	if (!pkt->ackd && pkt->active) {
 		lseek(infd, pkt->file_idx, SEEK_SET);
-		printf("PKT %u RETRANSMIT\n", start_pkt_sn);
 	}
 
 	uint32_t pyld_sz;
@@ -282,7 +279,7 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 			return -1;
 		}
 
-		if (eof_reached) printf("End of file.\n");
+		if (eof_reached) fprintf(stderr, "End of file.\n");
 
 		pkt_sn++;
 		if (pkt_sn == winsz) pkt_sn = 0; // wrap back to unused pkt_info
