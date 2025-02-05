@@ -336,7 +336,7 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, ui
 
 	// get pkt sn
 	uint32_t pkt_sn = get_data_sn(pkt_buf);
-	if (pkt_sn == 0 && errno == EDEVERR) {
+	if (pkt_sn == 0 && errno == 1) {
 		fprintf(stderr, "myserver ~ process_data_pkt(): encountered an error getting pkt sn from data pkt.\n");
 		return -1;
 	}
@@ -503,7 +503,7 @@ int process_outfile_path_pkt(int sockfd, char *pkt_buf, struct client_info *clie
 
 	// get pkt sn
 	uint32_t pkt_sn = get_data_sn(pkt_buf);
-	if (pkt_sn == 0 && errno == EDEVERR) {
+	if (pkt_sn == 0 && errno == 1) {
 		fprintf(stderr, "myserver ~ process_outfile_path_pkt(): encountered an error getting pkt sn from data pkt.\n");
 		return -1;
 	}
