@@ -697,7 +697,7 @@ int drop_pkt(char *pkt_buf, int pkt_count, int droppc) {
 	char *opstring = opcode == OP_ACK ? "DROP ACK" : (OP_WR ? "DROP CTRL" : "DROP DATA");
 
 	uint32_t sn = opcode == OP_WR ? 0 : (opcode == OP_ACK ? get_ack_sn(pkt_buf) : get_data_sn(pkt_buf));
-	if (sn == 0 && errno == EDEVERR) {
+	if (sn == 0 && errno == 1) {
 		fprintf(stderr, "myserver ~ drop_recvd_pkt(): encountered an error getting pkt sn from pkt.\n");
 		return -1;
 	}

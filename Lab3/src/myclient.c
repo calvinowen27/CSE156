@@ -477,7 +477,7 @@ int log_pkt(char *pkt_buf) {
 	char *opstring = opcode == OP_ACK ? "ACK" : (OP_WR ? "CTRL" : "DATA");
 
 	uint32_t sn = opcode == OP_WR ? 0 : (opcode == OP_ACK ? get_ack_sn(pkt_buf) : get_data_sn(pkt_buf));
-	if (sn == 0 && errno == EDEVERR) {
+	if (sn == 0 && errno == 1) {
 		fprintf(stderr, "myclient ~ log_pkt(): encountered an error getting pkt sn from pkt.\n");
 		return -1;
 	}
