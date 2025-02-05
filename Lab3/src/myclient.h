@@ -1,6 +1,8 @@
 #ifndef MYCLIENT_INCLUDE
 #define MYCLIENT_INCLUDE
 
+#include <stdint.h>
+
 struct pkt_ack_info;
 
 // send file from fd to sockfd, also using sockaddr
