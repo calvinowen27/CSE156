@@ -81,11 +81,11 @@ int echo_data(int sockfd, struct sockaddr *sockaddr, socklen_t *sock_size) {
 	char buf[BUFFER_SIZE];
 	memset(buf, 0, sizeof(buf));
 
-	uint8_t next_client_id = 2, serving_client_id = 0;
+	u_int8_t next_client_id = 2, serving_client_id = 0;
 
 	int bytes_recvd, waiting_for_client = 1;
 	while ((bytes_recvd = recvfrom(sockfd, buf, BUFFER_SIZE, 0, sockaddr, sock_size)) >= 0) {
-		if ((uint8_t)buf[1] == serving_client_id) {
+		if ((u_int8_t)buf[1] == serving_client_id) {
 			if (bytes_recvd > HEADER_SIZE) { // received good packet, echo back
 				if (buf[0] > 2) {
 					printf("crashing server crashing\n");

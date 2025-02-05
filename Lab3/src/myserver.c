@@ -71,7 +71,7 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int dro
 	// init pkt buffer
 	char *pkt_buf = malloc(sizeof(char) * BUFFER_SIZE);
 
-	uint32_t max_client_count = START_CLIENTS;
+	u_int32_t max_client_count = START_CLIENTS;
 
 	// initialize clients
 	struct client_info *clients = init_clients(max_client_count);
@@ -88,7 +88,7 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int dro
 
 	struct timeval timeout = { LOSS_TIMEOUT_SECS, 0 };
 
-	uint32_t next_client_id = 1;
+	u_int32_t next_client_id = 1;
 
 	int bytes_recvd;
 
@@ -139,7 +139,7 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int dro
 			}
 		} else {
 			// send acks and reset id:sn maps
-			for (uint32_t i = 0; i < max_client_count; i++) {
+			for (u_int32_t i = 0; i < max_client_count; i++) {
 				struct client_info *client = &clients[i];
 				if (!client->is_active) {
 					continue;
@@ -154,7 +154,7 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int dro
 	}
 
 	// free all heap memory
-	for (uint32_t i = 0; i < max_client_count; i++) {
+	for (u_int32_t i = 0; i < max_client_count; i++) {
 		// free(clients[i].ooo_file_idxs);
 		// free(clients[i].ooo_pkt_sns);
 		free(clients[i].pkt_win);
@@ -170,7 +170,7 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int dro
 // return 0 on success, -1 on error
 int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int droppc) {
 	// find first unackd pkt
-	uint32_t pkts_counted = 0;
+	u_int32_t pkts_counted = 0;
 	client->first_unwritten_sn = client->expected_start_sn;
 	struct pkt_info *pkt;
 	while (pkts_counted < client->winsz) {
@@ -201,7 +201,7 @@ int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int 
 
 	char ack_buf[5];
 	ack_buf[0] = OP_ACK;
-	uint32_t ack_sn = client->first_unwritten_sn == 0 ? client->winsz - 1 : client->first_unwritten_sn - 1;
+	u_int32_t ack_sn = client->first_unwritten_sn == 0 ? client->winsz - 1 : client->first_unwritten_sn - 1;
 	if (assign_ack_sn(ack_buf, ack_sn) < 0) {
 		fprintf(stderr, "myserver ~ send_client_ack(): encountered an error assigning client %u lowest sn %u to ack buf.\n", client->id, client->first_unwritten_sn);
 		return -1;
@@ -223,7 +223,7 @@ int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int 
 
 // initialize client connection with outfile and next client_id, send response to client with client_id
 // return 0 on success, -1 on error
-int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, char *pkt_buf, struct client_info **clients, uint32_t *max_client_count, uint32_t client_id) {
+int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, char *pkt_buf, struct client_info **clients, u_int32_t *max_client_count, u_int32_t client_id) {
 	printf("process wr.\n");
 	
 	if (clients == NULL || *clients == NULL) {
@@ -236,7 +236,7 @@ int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr
 		return -1;
 	}
 
-	uint32_t winsz = get_write_req_winsz(pkt_buf);
+	u_int32_t winsz = get_write_req_winsz(pkt_buf);
 	if (winsz == 0) {
 		fprintf(stderr, "myserver ~ process_write_req(): encountered an error getting window size from write request pkt.\n");
 		return -1;
@@ -255,7 +255,7 @@ int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr
 	char res_buf[1 + CID_BYTES];
 	res_buf[0] = OP_ACK;
 
-	uint8_t *cid_bytes = split_bytes(client_id);
+	u_int8_t *cid_bytes = split_bytes(client_id);
 	if (cid_bytes == NULL) {
 		fprintf(stderr, "myserver ~ process_write_req(): something went wrong splitting client_id bytes.\n");
 		return -1;
@@ -281,7 +281,7 @@ int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr
 // if payload size == 0, terminate client connection
 // if client unrecognized, don't do anything
 // return 0 on success, -1 on error
-int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, uint32_t *max_client_count, int *pkts_sent, int droppc) {
+int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, u_int32_t *max_client_count, int *pkts_sent, int droppc) {
 	// if payload size == 0: terminate connection
 	// if pkt in client ooo buffer, write to file based on that
 	// else write to end of file
@@ -303,14 +303,14 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, ui
 	}
 
 	// get client id from pkt and check if we are serving that client
-	uint32_t client_id = get_data_client_id(pkt_buf);
+	u_int32_t client_id = get_data_client_id(pkt_buf);
 	if (client_id == 0) {
 		fprintf(stderr, "myserver ~ process_data_pkt(): encountered an error getting client_id from pkt.\n");
 		return -1;
 	}
 
 	struct client_info *client = NULL;
-	for (uint32_t i = 0; i < *max_client_count; i++) {
+	for (u_int32_t i = 0; i < *max_client_count; i++) {
 		if ((*clients)[i].id == client_id) {
 			client = &(*clients)[i];
 			break;
@@ -335,7 +335,7 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, ui
 	// client->ack_sent = false;
 
 	// get pkt sn
-	uint32_t pkt_sn = get_data_sn(pkt_buf);
+	u_int32_t pkt_sn = get_data_sn(pkt_buf);
 	if (pkt_sn == 0 && errno == 1) {
 		fprintf(stderr, "myserver ~ process_data_pkt(): encountered an error getting pkt sn from data pkt.\n");
 		return -1;
@@ -346,7 +346,7 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, ui
 	}
 
 	// get payload size, terminate client connection if == 0xffffffff
-	uint32_t pyld_sz = get_data_pyld_sz(pkt_buf);
+	u_int32_t pyld_sz = get_data_pyld_sz(pkt_buf);
 	if (pyld_sz == 0xffffffff) {
 		fprintf(stderr, "myserver ~ process_data_pkt(): encountered an error getting payload size from data pkt.\n");
 		return -1;
@@ -385,7 +385,7 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, ui
 
 		pkt->written = true;
 
-		uint32_t sn = pkt_sn + 1;
+		u_int32_t sn = pkt_sn + 1;
 		if (sn == client->winsz) sn = 0;
 		while (sn != client->expected_start_sn) {
 			// save ooo pkt to buffer at current file location
@@ -407,7 +407,7 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, ui
 		pkt->seen = true;
 
 		// store all pkts between expected_sn and pkt_sn in ooo_buffer
-		uint32_t sn = client->expected_sn;
+		u_int32_t sn = client->expected_sn;
 		while (sn != pkt_sn) {
 			// save ooo pkt to buffer at current file location
 			pkt = &client->pkt_win[sn];
@@ -454,7 +454,7 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, ui
 		pkt->written = true;
 
 		// adjust rest of ooo pkt file idxs
-		for (uint32_t sn = 0; sn < client->winsz; sn++) {
+		for (u_int32_t sn = 0; sn < client->winsz; sn++) {
 			pkt = &client->pkt_win[sn];
 
 			if (pkt->file_idx == file_idx && pkt->seen && !pkt->written) {
@@ -502,7 +502,7 @@ int process_outfile_path_pkt(int sockfd, char *pkt_buf, struct client_info *clie
 	}
 
 	// get pkt sn
-	uint32_t pkt_sn = get_data_sn(pkt_buf);
+	u_int32_t pkt_sn = get_data_sn(pkt_buf);
 	if (pkt_sn == 0 && errno == 1) {
 		fprintf(stderr, "myserver ~ process_outfile_path_pkt(): encountered an error getting pkt sn from data pkt.\n");
 		return -1;
@@ -513,7 +513,7 @@ int process_outfile_path_pkt(int sockfd, char *pkt_buf, struct client_info *clie
 	}
 
 	// get payload size
-	uint32_t pyld_sz = get_data_pyld_sz(pkt_buf);
+	u_int32_t pyld_sz = get_data_pyld_sz(pkt_buf);
 	if (pyld_sz == 0xffffffff) {
 		fprintf(stderr, "myserver ~ process_outfile_path_pkt(): encountered an error getting payload size from data pkt.\n");
 		return -1;
@@ -529,7 +529,7 @@ int process_outfile_path_pkt(int sockfd, char *pkt_buf, struct client_info *clie
 	// if we've made it to here, everything is valid and client is creating outfile path
 	struct pkt_info *pkt = &client->pkt_win[pkt_sn];
 
-	uint32_t curr_idx;
+	u_int32_t curr_idx;
 
 	// write based on sn, check for ooo
 	if (pkt_sn == client->expected_sn) { // normal, write bytes to outfile
@@ -555,7 +555,7 @@ int process_outfile_path_pkt(int sockfd, char *pkt_buf, struct client_info *clie
 
 		pkt->written = true;
 
-		uint32_t sn = pkt_sn + 1;
+		u_int32_t sn = pkt_sn + 1;
 		if (sn == client->winsz) sn = 0;
 		while (sn != client->expected_start_sn) {
 			// save ooo pkt to buffer at current file location
@@ -577,7 +577,7 @@ int process_outfile_path_pkt(int sockfd, char *pkt_buf, struct client_info *clie
 		pkt->seen = true;
 
 		// store all pkts between expected_sn and pkt_sn in ooo_buffer
-		uint32_t sn = client->expected_sn;
+		u_int32_t sn = client->expected_sn;
 		while (sn != pkt_sn) {
 			// save ooo pkt to buffer at current file location
 			pkt = &client->pkt_win[sn];
@@ -635,7 +635,7 @@ int process_outfile_path_pkt(int sockfd, char *pkt_buf, struct client_info *clie
 		pkt->written = true;
 
 		// adjust rest of ooo pkt file idxs
-		for (uint32_t sn = 0; sn < client->winsz; sn++) {
+		for (u_int32_t sn = 0; sn < client->winsz; sn++) {
 			pkt = &client->pkt_win[sn];
 
 			if (pkt->file_idx == curr_idx && pkt->seen && !pkt->written) {
@@ -683,7 +683,7 @@ int drop_pkt(char *pkt_buf, int pkt_count, int droppc) {
 	time_t t = time(NULL);
 	struct tm *tm = gmtime(&t);
 
-	uint32_t opcode = get_pkt_opcode(pkt_buf);
+	u_int32_t opcode = get_pkt_opcode(pkt_buf);
 	if (opcode == 0) {
 		fprintf(stderr, "myserver ~ drop_recvd_pkt(): encountered error getting opcode from pkt.\n");
 		return -1;
@@ -696,7 +696,7 @@ int drop_pkt(char *pkt_buf, int pkt_count, int droppc) {
 
 	char *opstring = opcode == OP_ACK ? "DROP ACK" : (OP_WR ? "DROP CTRL" : "DROP DATA");
 
-	uint32_t sn = opcode == OP_WR ? 0 : (opcode == OP_ACK ? get_ack_sn(pkt_buf) : get_data_sn(pkt_buf));
+	u_int32_t sn = opcode == OP_WR ? 0 : (opcode == OP_ACK ? get_ack_sn(pkt_buf) : get_data_sn(pkt_buf));
 	if (sn == 0 && errno == 1) {
 		fprintf(stderr, "myserver ~ drop_recvd_pkt(): encountered an error getting pkt sn from pkt.\n");
 		return -1;
