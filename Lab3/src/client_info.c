@@ -120,25 +120,30 @@ int client_info_init(struct client_info *client, uint32_t client_id, char *outfi
 		return -1;
 	}
 
-	// create outfile directories if necessary
-	if (create_file_directory(outfile_path) < 0) {
-		fprintf(stderr, "myserver ~ client_info_init(): failed to create outfile directories.\n");
-		return -1;
-	}
+	// // create outfile directories if necessary
+	// if (create_file_directory(outfile_path) < 0) {
+	// 	fprintf(stderr, "myserver ~ client_info_init(): failed to create outfile directories.\n");
+	// 	return -1;
+	// }
 
 	// open outfile
-	int outfd = open(outfile_path, O_CREAT | O_TRUNC | O_RDWR, 0664);
+	// int outfd = open(outfile_path, O_CREAT | O_TRUNC | O_RDWR, 0664);
 
 	// set client_info values
 	client->is_active = true;
 	client->id = client_id;
 	client->expected_sn = 0;
-	client->outfd = outfd;
+	// client->outfd = outfd;
 	client->outfile_path = outfile_path;
 	client->first_unwritten_sn = 0;
 	client->sockaddr = sockaddr;
 	client->sockaddr_size = sockaddr_size;
 	client->winsz = winsz;
+	client->outfile_path_size = 50;
+	client->outfile_path_len = 0;
+	client->outfile_path = calloc(client->outfile_path_size + 1, sizeof(char));
+	client->outfile_path[client->outfile_path_size] = 0;
+	client->outfile_path_done = false;
 
 	// allocate pkt_info buffer
 	client->pkt_win = calloc(sizeof(struct pkt_info), client->winsz);

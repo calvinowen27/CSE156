@@ -125,6 +125,7 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int dro
 							fprintf(stderr, "myserver ~ run(): encountered error processing data pkt.\n");
 							return -1;
 						}
+						
 						break;
 					default:
 						// do nothing?
@@ -223,6 +224,8 @@ int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int 
 // initialize client connection with outfile and next client_id, send response to client with client_id
 // return 0 on success, -1 on error
 int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, char *pkt_buf, struct client_info **clients, uint32_t *max_client_count, uint32_t client_id) {
+	printf("process wr.\n");
+	
 	if (clients == NULL || *clients == NULL) {
 		fprintf(stderr, "myserver ~ process_write_req(): invalid ptr passed to clients parameter.\n");
 		return -1;
@@ -240,8 +243,7 @@ int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr
 	}
 
 	// create outfile path, starting at byte 1 of pkt_buf (byte 0 is opcode)
-	char *outfile_path = calloc(strlen(pkt_buf + WR_HEADER_SIZE) + 1, sizeof(char));
-	memcpy(outfile_path, pkt_buf + WR_HEADER_SIZE, strlen(pkt_buf + WR_HEADER_SIZE));
+	char *outfile_path = NULL;
 
 	// accept client, initializing all client_info data and opening outfile for writing
 	if (accept_client(clients, max_client_count, client_id, outfile_path, sockaddr, sockaddr_size, winsz) < 0) {
@@ -319,6 +321,15 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, ui
 	if (client == NULL) {
 		fprintf(stderr, "myserver ~ process_data_pkt(): failed to find client %u. Terminating.\n", client_id);
 		return 0;
+	}
+
+	printf("process data.\n");
+	if (!client->outfile_path_done) {
+		printf("outfile path.\n");
+		if (process_outfile_path_pkt(sockfd, pkt_buf, client, pkts_sent, droppc) < 0) {
+			fprintf(stderr, "myserver ~ process_data_pkt(): encountered error processing outfile path pkt.\n");
+			return 0;
+		}
 	}
 
 	// client->ack_sent = false;
@@ -462,6 +473,198 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, ui
 		if (send_client_ack(client, sockfd, pkts_sent, droppc) < 0) {
 			fprintf(stderr, "myserver ~ process_data_pkt(): encountered error sending ack to client.\n");
 			return -1;
+		}
+	}
+
+	return 0;
+}
+
+// perform writing actions from a data pkt sent by known client
+// if payload size == 0, terminate client connection
+// if client unrecognized, don't do anything
+// return 0 on success, -1 on error
+int process_outfile_path_pkt(int sockfd, char *pkt_buf, struct client_info *client, int *pkts_sent, int droppc) {
+	// if payload size == 0: terminate connection
+	// if pkt in client ooo buffer, write to file based on that
+	// else write to end of file
+	// if client unrecognized, idk don't do it
+
+	printf("process outfile path: %s\n", client->outfile_path);
+
+	if (client == NULL) {
+		fprintf(stderr, "myserver ~ process_outfile_path_pkt(): invalid ptr passed to client parameter.\n");
+		return -1;
+	}
+
+	if (pkt_buf == NULL) {
+		fprintf(stderr, "myserver ~ process_outfile_path_pkt(): invalid ptr passed to pkt_buf parameter.\n");
+		return -1;
+	}
+
+	// get pkt sn
+	uint32_t pkt_sn = get_data_sn(pkt_buf);
+	if (pkt_sn == 0 && errno == EDEVERR) {
+		fprintf(stderr, "myserver ~ process_outfile_path_pkt(): encountered an error getting pkt sn from data pkt.\n");
+		return -1;
+	}
+
+	if (client->first_unwritten_sn == pkt_sn) {
+		client->first_unwritten_sn++;
+	}
+
+	// get payload size
+	uint32_t pyld_sz = get_data_pyld_sz(pkt_buf);
+	if (pyld_sz == 0xffffffff) {
+		fprintf(stderr, "myserver ~ process_outfile_path_pkt(): encountered an error getting payload size from data pkt.\n");
+		return -1;
+	} else if (pyld_sz == 0) {
+		if (send_client_ack(client, sockfd, pkts_sent, droppc) < 0) {
+			fprintf(stderr, "myserver ~ process_outfile_path_pkt(): encountered error sending ack to client.\n");
+			return -1;
+		}
+
+		return 1;
+	}
+
+	// if we've made it to here, everything is valid and client is creating outfile path
+	struct pkt_info *pkt = &client->pkt_win[pkt_sn];
+
+	uint32_t curr_idx;
+
+	// write based on sn, check for ooo
+	if (pkt_sn == client->expected_sn) { // normal, write bytes to outfile
+		if (!pkt->seen || pkt->written) {
+			pkt->file_idx = client->outfile_path_len;
+		}
+
+		if (client->outfile_path_len + pyld_sz >= client->outfile_path_size - 1) {
+			client->outfile_path_size += pyld_sz;
+			client->outfile_path = realloc(client->outfile_path, client->outfile_path_size);
+			client->outfile_path[client->outfile_path_size] = 0;
+			if (client->outfile_path == NULL) {
+				fprintf(stderr, "myserver ~ process_outfile_path_pkt(): failed to reallocate client %u outfile path.\n", client->id);
+				return -1;
+			}
+		}
+
+		pkt->seen = true;
+
+		memcpy(client->outfile_path + pkt->file_idx, pkt_buf + DATA_HEADER_SIZE, pyld_sz);
+		curr_idx = pkt->file_idx + pyld_sz;
+		client->outfile_path_len = strlen(client->outfile_path);
+
+		pkt->written = true;
+
+		uint32_t sn = pkt_sn + 1;
+		if (sn == client->winsz) sn = 0;
+		while (sn != client->expected_start_sn) {
+			// save ooo pkt to buffer at current file location
+			pkt = &client->pkt_win[sn];
+			if (pkt->seen && !pkt->written && pkt->file_idx == client->pkt_win[pkt_sn].file_idx) {
+				pkt->file_idx = curr_idx;
+			}
+
+			sn ++;
+			if (sn == client->winsz) sn = 0;
+		}
+
+		pkt = &client->pkt_win[sn];
+		pkt->file_idx = client->outfile_path_len;
+
+		client->expected_sn = pkt_sn + 1;
+	} else if ((pkt_sn > client->expected_sn && pkt_sn > client->expected_start_sn) || (pkt_sn < client->expected_sn && pkt_sn < client->expected_start_sn) || (pkt_sn < client->expected_start_sn && pkt_sn > client->expected_sn)) {
+	//} else if (pkt_sn > client->expected_sn || (pkt_sn < client->expected_sn && pkt_sn < client->expected_start_sn)) { // pkt received before expected, update ooo buffer and write to end of file
+		pkt->seen = true;
+
+		// store all pkts between expected_sn and pkt_sn in ooo_buffer
+		uint32_t sn = client->expected_sn;
+		while (sn != pkt_sn) {
+			// save ooo pkt to buffer at current file location
+			pkt = &client->pkt_win[sn];
+			if (!pkt->seen) {
+				pkt->file_idx = client->outfile_path_len;
+			}
+
+			pkt->seen = true;
+			pkt->written = false;
+
+			sn ++;
+			if (sn == client->winsz) sn = 0;
+		}
+
+		pkt = &client->pkt_win[sn];
+		pkt->file_idx = client->outfile_path_len;
+
+		if (client->outfile_path_len + pyld_sz >= client->outfile_path_size - 1) {
+			client->outfile_path_size += pyld_sz;
+			client->outfile_path = realloc(client->outfile_path, client->outfile_path_size);
+			client->outfile_path[client->outfile_path_size] = 0;
+			if (client->outfile_path == NULL) {
+				fprintf(stderr, "myserver ~ process_outfile_path_pkt(): failed to reallocate client %u outfile path.\n", client->id);
+				return -1;
+			}
+		}
+
+		memcpy(client->outfile_path + pkt->file_idx, pkt_buf + DATA_HEADER_SIZE, pyld_sz);
+		curr_idx = pkt->file_idx + pyld_sz;
+		client->outfile_path_len = strlen(client->outfile_path);
+
+		pkt->written = true;
+
+		client->expected_sn = pkt_sn + 1;
+	} else { // pkt received late, write based on ooo buffer		
+		// go to correct location in outfile
+		pkt->seen = true;
+
+		if (client->outfile_path_len + pyld_sz >= client->outfile_path_size - 1) {
+			client->outfile_path_size += pyld_sz;
+			client->outfile_path = realloc(client->outfile_path, client->outfile_path_size);
+			client->outfile_path[client->outfile_path_size] = 0;
+			if (client->outfile_path == NULL) {
+				fprintf(stderr, "myserver ~ process_outfile_path_pkt(): failed to reallocate client %u outfile path.\n", client->id);
+				return -1;
+			}
+		}
+
+		memcpy(client->outfile_path + pkt->file_idx, client->outfile_path + pkt->file_idx + pyld_sz, pyld_sz);
+		memcpy(client->outfile_path + pkt->file_idx, pkt_buf + DATA_HEADER_SIZE, pyld_sz);
+		client->outfile_path_len = strlen(client->outfile_path);
+
+		curr_idx = pkt->file_idx + pyld_sz;
+
+		pkt->written = true;
+
+		// adjust rest of ooo pkt file idxs
+		for (uint32_t sn = 0; sn < client->winsz; sn++) {
+			pkt = &client->pkt_win[sn];
+
+			if (pkt->file_idx == curr_idx && pkt->seen && !pkt->written) {
+				pkt->file_idx += pyld_sz;
+			}
+		}
+	}
+
+	if (client->expected_sn == client->winsz) {
+		client->expected_sn = 0;
+	}
+
+	if (pkt_sn == client->expected_start_sn - 1 || (pkt_sn == client->winsz - 1 && client->expected_start_sn == 0)) {
+		if (send_client_ack(client, sockfd, pkts_sent, droppc) < 0) {
+			fprintf(stderr, "myserver ~ process_outfile_path_pkt(): encountered error sending ack to client.\n");
+			return -1;
+		}
+	}
+
+	if (pkt_buf[DATA_HEADER_SIZE + pyld_sz - 1] == 0) {
+		client->outfile_path_done = true;
+		// create outfile directories if necessary
+		if (create_file_directory(client->outfile_path) < 0) {
+			fprintf(stderr, "myserver ~ process_outfile_path_pkt(): failed to create outfile directories.\n");
+			return -1;
+		}
+		client->outfd = open(client->outfile_path, O_CREAT | O_TRUNC | O_RDWR, 0664);
+		if (client->outfd < 0) {
+			fprintf(stderr, "myserver ~ process_outfile_path_pkt(): failed to open outfile_path %s.\n", client->outfile_path);
 		}
 	}
 

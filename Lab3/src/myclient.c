@@ -113,24 +113,33 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 	uint32_t pkts_sent;
 
 	struct pkt_ack_info pkt_info[winsz];
-	for (uint32_t sn = 0; sn < winsz; sn++) {
-		pkt_info[sn].active = false;
-		pkt_info[sn].retransmits = 0;
-		pkt_info[sn].ackd = false;
-		pkt_info[sn].file_idx = 0;
-	}
+	reset_pkt_info(pkt_info, winsz);
+
+	bool outfile_path_done = false;
+	int outfile_idx = 0;
 
 	// continue while eof hasn't been reached or pkts need to be resent
 	while (!reached_eof || need_pkt_resend) {
 		need_pkt_resend = false;
 
-		// send pkt window
-		if ((pkts_sent = send_window_pkts(infd, sockfd, sockaddr, sockaddr_size, mss, winsz, client_id, start_pkt_sn, pkt_info)) < 0) {
-			fprintf(stderr, "myclient ~ send_file(): encountered an error while sending pkt window.\n");
-			return -1;
+		if (outfile_path_done) {
+			// send pkt window
+			if ((pkts_sent = send_window_pkts(infd, sockfd, sockaddr, sockaddr_size, mss, winsz, client_id, start_pkt_sn, pkt_info)) < 0) {
+				fprintf(stderr, "myclient ~ send_file(): encountered an error while sending pkt window.\n");
+				return -1;
+			}
+		} else {
+			// send window for outfile path
+			if ((pkts_sent = send_outfile_path(outfile_path, &outfile_idx, sockfd, sockaddr, sockaddr_size, mss, winsz, client_id, start_pkt_sn, pkt_info)) < 0) {
+				fprintf(stderr, "myclient ~ send_file(): encountered an error while sending pkt window.\n");
+				return -1;
+			} else if (pkts_sent == 0) {
+				outfile_path_done = true;
+				reset_pkt_info(pkt_info, winsz);
+			}
 		}
 
-		reached_eof = pkts_sent == 0; // update reached_eof
+		reached_eof = pkts_sent == 0 && outfile_path_done; // update reached_eof
 
 		// wait for server response, to get ack sn
 		if (recv_server_response(sockfd, sockaddr, sockaddr_size, &ack_pkt_sn) < 0) {
@@ -168,16 +177,15 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 // return 0 on success, -1 on error
 int perform_handshake(int sockfd, const char *outfile_path, struct sockaddr *sockaddr, socklen_t *sockaddr_size, uint32_t *client_id, uint32_t winsz) {
 	// construct WR packet
-	char handshake_buf[WR_HEADER_SIZE + strlen(outfile_path) + 1];				// null terminated and opcode both 1 byte
+	char handshake_buf[WR_HEADER_SIZE];				// null terminated and opcode both 1 byte
 	handshake_buf[0] = OP_WR;										// set WR opcode
+
+	(void)outfile_path;
 
 	if (assign_wr_winsz(handshake_buf, winsz) < 0) {
 		fprintf(stderr, "myclient ~ perform_handshake(): encountered error assigning window size to handshake buffer.\n");
 		return -1;
 	}
-
-	handshake_buf[sizeof(handshake_buf) - 1] = 0;					// null terminate
-	memcpy(handshake_buf + WR_HEADER_SIZE, outfile_path, strlen(outfile_path));	// copy outfile_path to pkt
 
 	int recv_res = 1;
 
@@ -347,6 +355,107 @@ int recv_server_response(int sockfd, struct sockaddr *sockaddr, socklen_t *socka
 	return 0;
 }
 
+// send window of pkts with outfile path as content
+// returns number of pkts sent, -1 on error
+int send_outfile_path(const char *outfile_path, int *path_idx, int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int mss, uint32_t winsz, uint32_t client_id, uint32_t start_pkt_sn, struct pkt_ack_info *pkt_info) {
+	char pkt_buf[mss];
+	memset(pkt_buf, 0, sizeof(pkt_buf));
+
+	// reset pkt info array
+	for (uint32_t sn = 0; sn < winsz; sn++) {
+		struct pkt_ack_info *pkt = &pkt_info[sn];
+
+		if (pkt->ackd) {
+			pkt->retransmits = 0;
+			pkt->active = false;
+			pkt->ackd = false;
+		} else if (pkt->active) {
+			pkt->retransmits ++;
+		}
+	}
+
+	// check start pkt for ack, if no ack, go back to file idx
+	struct pkt_ack_info *pkt = &pkt_info[start_pkt_sn];
+	if (!pkt->ackd && pkt->active) {
+		*path_idx = pkt->file_idx;	// use file idx for path idx in this function
+	}
+
+	uint32_t pyld_sz;
+
+	bool eop_reached = false;
+
+	uint32_t pkt_sn = start_pkt_sn;
+	uint32_t pkts_sent = 0;
+	int bytes_read;
+
+	uint32_t pkt_space = ((uint32_t)mss) - ((uint32_t)DATA_HEADER_SIZE);
+
+	while (pkts_sent < winsz && !eop_reached) { // only send max winsz packets
+		pkt = &pkt_info[pkt_sn];
+		pkt->file_idx = *path_idx;
+
+		pkt->active = true;
+		pkt->ackd = false;
+
+		// bytes_read is our payload size
+		// bytes_read = read(infd, pkt_buf + DATA_HEADER_SIZE, ((uint32_t)mss) - ((uint32_t)DATA_HEADER_SIZE));
+		bytes_read = strlen(outfile_path + pkt->file_idx) > pkt_space ? pkt_space : strlen(outfile_path + pkt->file_idx);
+		
+		memcpy(pkt_buf + DATA_HEADER_SIZE, outfile_path + pkt->file_idx, bytes_read);
+		
+		pyld_sz = (uint32_t)bytes_read;
+
+		if (bytes_read < 0) {
+			fprintf(stderr, "myclient ~ send_outfile_path(): encountered an error determining path length left.\n");
+			return -1;
+		} else if (pyld_sz < pkt_space) {
+			pkt_buf[bytes_read] = 0; // null terminate
+			pyld_sz ++;
+			eop_reached = true;
+		}
+		
+		// assign opcode
+		assign_pkt_opcode(pkt_buf, OP_DATA);	// assign WR for logging, change to DATA later
+
+		// assign client ID
+		assign_pkt_client_id(pkt_buf, client_id);
+
+		// assign packet sequence num
+		assign_pkt_sn(pkt_buf, pkt_sn);
+
+		// assign payload size
+		assign_pkt_pyld_sz(pkt_buf, pyld_sz);
+
+		if (sendto(sockfd, pkt_buf, DATA_HEADER_SIZE + pyld_sz, 0, sockaddr, *sockaddr_size) < 0) {
+			fprintf(stderr, "myclient ~ send_outfile_path(): client failed to send packet to server.\n");
+			return -1;
+		}
+
+		// assign opcode
+		assign_pkt_opcode(pkt_buf, OP_WR);
+
+		if (log_pkt(pkt_buf) < 0) {
+			fprintf(stderr, "myclient ~ send_outfile_path(): encountered error logging pkt info.\n");
+			return -1;
+		}
+
+		if (eop_reached) fprintf(stderr, "End of outfile path.\n");
+
+		pkt_sn++;
+		if (pkt_sn == winsz) pkt_sn = 0; // wrap back to unused pkt_info
+
+		pkts_sent++;
+
+		*path_idx += bytes_read;
+
+		memset(pkt_buf, 0, sizeof(pkt_buf));
+	}
+
+	if (eop_reached) return 0;
+
+	return pkts_sent;
+}
+
 // prints log message of pkt
 // returns 0 on success, -1 on error
 int log_pkt(char *pkt_buf) {
@@ -375,4 +484,13 @@ int log_pkt(char *pkt_buf) {
 	printf("%d-%02d-%02dT%02d:%02d:%02dZ, %s, %u\n", tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec, opstring, sn);
 
 	return 0;
+}
+
+void reset_pkt_info(struct pkt_ack_info *pkt_info, uint32_t winsz) {
+	for (uint32_t sn = 0; sn < winsz; sn++) {
+		pkt_info[sn].active = false;
+		pkt_info[sn].retransmits = 0;
+		pkt_info[sn].ackd = false;
+		pkt_info[sn].file_idx = 0;
+	}
 }

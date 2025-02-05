@@ -20,8 +20,14 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 // return 0 on success, -1 on error
 int recv_server_response(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, uint32_t *ack_pkt_sn);
 
+// send window of pkts with outfile path as content
+// returns number of pkts sent, -1 on error
+int send_outfile_path(const char *outfile_path, int *path_idx, int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int mss, uint32_t winsz, uint32_t client_id, uint32_t start_pkt_sn, struct pkt_ack_info *pkt_info);
+
 // prints log message of pkt
 // returns 0 on success, -1 on error
 int log_pkt(char *pkt_buf);
+
+void reset_pkt_info(struct pkt_ack_info *pkt_info, uint32_t winsz);
 
 #endif

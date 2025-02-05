@@ -21,7 +21,10 @@ struct client_info {
 	uint32_t expected_sn;
 	bool ack_sent;
 	bool is_active;
-	char *outfile_path;	// only saving this so it can be freed
+	char *outfile_path;
+	uint32_t outfile_path_len;
+	uint32_t outfile_path_size;
+	bool outfile_path_done;
 };
 
 // initialize client array and set default values for client_info entries

@@ -29,4 +29,6 @@ int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int 
 // returns 1 if true, 0 if false
 int drop_pkt(char *pkt_buf, int pkt_count, int droppc);
 
+int process_outfile_path_pkt(int sockfd, char *pkt_buf, struct client_info *client, int *pkts_sent, int droppc);
+
 #endif

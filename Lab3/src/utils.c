@@ -506,6 +506,7 @@ int create_file_directory(const char *file_path) {
 			if (stat(outfile_dir, &st) == -1) {
 				if (mkdir(outfile_dir, 0700) < 0) {
 					fprintf(stderr, "utils ~ create_file_directory(): failed to make directory %s\n", outfile_dir);
+					fprintf(stderr, "%s\n", strerror(errno));
 					return -1;
 				}
 			}
