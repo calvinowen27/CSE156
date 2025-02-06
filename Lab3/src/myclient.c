@@ -157,7 +157,6 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 			for (u_int32_t sn = 0; sn < 2*winsz; sn++) {
 				struct pkt_ack_info *pkt = &pkt_info[sn];
 				if (pkt->active) {
-					fprintf(stderr, "pkt %u has %d retransmits\n", sn, pkt->retransmits);
 					if ((ack_pkt_sn > start_pkt_sn && sn >= start_pkt_sn && sn <= ack_pkt_sn) || (ack_pkt_sn < start_pkt_sn && (sn >= start_pkt_sn || sn <= ack_pkt_sn))) {
 						pkt->ackd = true;
 						pkt->active = false;
