@@ -7,7 +7,7 @@ echo "
 ./bin/myserver 9090 3 > server_out 2> server_err &
 pid=$!
 
-./bin/myclient 127.0.0.1 9090 29 10 test_files/small_ascii.txt out/small_ascii_out.txt > client_out 2> client_err &
+./bin/myclient 127.0.0.1 9090 29 10 test_files/small_ascii.txt out/small_ascii_out.txt > client_out 2> client_err
 diff test_files/small_ascii.txt out/small_ascii_out.txt > diff
 
 if [ ! -d out ]; then
@@ -47,4 +47,4 @@ echo "~~~~~~~~~~~~~~~~~~~~~~~
 kill -9 $pid
 wait $pid &>/dev/null
 
-rm -rf diff
+rm -rf diff #out/

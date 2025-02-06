@@ -405,6 +405,7 @@ int log_pkt(char *pkt_buf) {
 	}
 
 	printf("%d-%02d-%02dT%02d:%02d:%02dZ, %s, %u\n", tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec, opstring, sn);
+	fflush(stdout);
 
 	return 0;
 }
