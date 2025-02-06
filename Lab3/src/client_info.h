@@ -7,6 +7,7 @@ struct pkt_info {
 	off_t file_idx;
 	bool written;
 	bool seen;
+	bool ackd;
 };
 
 struct client_info {
@@ -18,13 +19,16 @@ struct client_info {
 	struct sockaddr *sockaddr;
 	socklen_t *sockaddr_size;
 	u_int32_t winsz;
+	u_int32_t pkt_count;
 	u_int32_t expected_sn;
-	bool ack_sent;
+	bool dupe_ackd_pkts;
 	bool is_active;
 	char *outfile_path;
 	u_int32_t outfile_path_len;
 	u_int32_t outfile_path_size;
 	bool outfile_path_done;
+	u_int32_t recvd_pkts;
+	u_int32_t prev_win_start_sn;
 };
 
 // initialize client array and set default values for client_info entries

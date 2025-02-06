@@ -139,25 +139,29 @@ int client_info_init(struct client_info *client, u_int32_t client_id, char *outf
 	client->sockaddr = sockaddr;
 	client->sockaddr_size = sockaddr_size;
 	client->winsz = winsz;
+	client->pkt_count = winsz * 2;
 	client->outfile_path_size = 50;
 	client->outfile_path_len = 0;
 	client->outfile_path = calloc(client->outfile_path_size + 1, sizeof(char));
 	client->outfile_path[client->outfile_path_size] = 0;
 	client->outfile_path_done = false;
+	client->recvd_pkts = 0;
+	client->dupe_ackd_pkts = false;
 
 	// allocate pkt_info buffer
-	client->pkt_win = calloc(sizeof(struct pkt_info), client->winsz);
+	client->pkt_win = calloc(sizeof(struct pkt_info), client->pkt_count);
 	if (client->pkt_win == NULL) {
 		fprintf(stderr, "myserver ~ client_info_init(): encountered an error initializing client pkt_win.\n");
 		return -1;	
 	}
 
-	for (u_int32_t sn = 0; sn < client->winsz; sn++) {
+	for (u_int32_t sn = 0; sn < client->pkt_count; sn++) {
 		struct pkt_info *pkt_info = &client->pkt_win[sn];
 
 		pkt_info->seen = false;
 		pkt_info->written = false;
 		pkt_info->file_idx = 0;
+		pkt_info->ackd = false;
 	}
 
 	client->expected_start_sn = 0;
@@ -219,14 +223,16 @@ int terminate_client(struct client_info **clients, u_int32_t *max_client_count, 
 void reset_pkt_info(struct client_info *client) {
 	if (client == NULL) {
 		fprintf(stderr, "myserver ~ reset_pkt_info(): cannot pass NULL to client argument.\n");
+		return;
 	}
 
 	client->first_unwritten_sn = 0;
 	client->expected_sn = 0;
+	client->expected_start_sn = 0;
 
 	struct pkt_info *pkt;
 
-	for (u_int32_t sn = 0; sn < client->winsz; sn++) {
+	for (u_int32_t sn = 0; sn < client->pkt_count; sn++) {
 		pkt = &client->pkt_win[sn];
 
 		pkt->file_idx = 0;

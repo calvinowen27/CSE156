@@ -113,7 +113,7 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 	// send pkts from ack sn + 1
 	int pkts_sent;
 
-	struct pkt_ack_info pkt_info[winsz];
+	struct pkt_ack_info pkt_info[2*winsz];
 	reset_pkt_info(pkt_info, winsz);
 
 	bool outfile_path_done = false;
@@ -142,36 +142,39 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 
 		// wait for server response, to get ack sn
 		if ((res = recv_server_response(sockfd, sockaddr, sockaddr_size, &ack_pkt_sn)) < 0) {
-			fprintf(stderr, "myclient ~ send_file(): encourntered an error while trying to receive server response.\n");
+			fprintf(stderr, "myclient ~ send_file(): encountered an error while trying to receive server response.\n");
 			return -1;
 		} else if (res == 0 && !outfile_path_done) {
 			outfile_path_done = true;
-			reset_pkt_info(pkt_info, winsz);
-			continue;
-		} else if (res == 1) {
-			continue;
+			// reset_pkt_info(pkt_info, winsz);
+			// continue;
 		}
 
 		if (reached_eof) break;
 
-		// update pkt info with ack
-		for (u_int32_t sn = 0; sn < winsz; sn++) {
-			struct pkt_ack_info *pkt = &pkt_info[sn];
-			if (pkt->active) {
-				if ((ack_pkt_sn > start_pkt_sn && sn >= start_pkt_sn && sn <= ack_pkt_sn) || (ack_pkt_sn < start_pkt_sn && (sn >= start_pkt_sn || sn <= ack_pkt_sn))) {
-					pkt->ackd = true;
-					pkt->active = false;
-				} else if (pkt->retransmits > 3) {
-					fprintf(stderr, "myclient ~ send_file(): exceeded 3 retransmits for a single packet.\n");
-					exit(1); // TODO: make sure this is the right exit code for failure/too many retransmissions
-				} else {
-					need_pkt_resend = true;
+		if (res != 1) {
+			// update pkt info with ack
+			for (u_int32_t sn = 0; sn < 2*winsz; sn++) {
+				struct pkt_ack_info *pkt = &pkt_info[sn];
+				if (pkt->active) {
+					if ((ack_pkt_sn > start_pkt_sn && sn >= start_pkt_sn && sn <= ack_pkt_sn) || (ack_pkt_sn < start_pkt_sn && (sn >= start_pkt_sn || sn <= ack_pkt_sn))) {
+						pkt->ackd = true;
+						pkt->active = false;
+					} else if (pkt->retransmits > 3) {
+						fprintf(stderr, "myclient ~ send_file(): exceeded 3 retransmits for a single packet.\n");
+						exit(1); // TODO: make sure this is the right exit code for failure/too many retransmissions
+					} else {
+						need_pkt_resend = true;
+					}
 				}
 			}
-		}
 
-		start_pkt_sn = ack_pkt_sn + 1;
-		if (start_pkt_sn == winsz) start_pkt_sn = 0; // wrap back
+			start_pkt_sn = ack_pkt_sn + 1;
+			// fprintf(stderr, "ack received, continuing with pkt %u\n", start_pkt_sn);
+			if (start_pkt_sn == 2*winsz) start_pkt_sn = 0; // wrap back
+		} else {
+			need_pkt_resend = true;
+		}
 	}
 
 	return 0;
@@ -226,7 +229,7 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 	memset(pkt_buf, 0, sizeof(pkt_buf));
 
 	// reset pkt info array
-	for (u_int32_t sn = 0; sn < winsz; sn++) {
+	for (u_int32_t sn = 0; sn < 2*winsz; sn++) {
 		struct pkt_ack_info *pkt = &pkt_info[sn];
 
 		if (pkt->ackd) {
@@ -241,6 +244,7 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 	// check start pkt for ack, if no ack, go back to file idx
 	struct pkt_ack_info *pkt = &pkt_info[start_pkt_sn];
 	if (!pkt->ackd && pkt->active) {
+		// fprintf(stderr, "not ackd start!!!\n");
 		lseek(infd, pkt->file_idx, SEEK_SET);
 	}
 
@@ -254,6 +258,8 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 
 	while (pkts_sent < winsz && !eof_reached) { // only send max winsz packets
 		pkt = &pkt_info[pkt_sn];
+		if (pkt->ackd) continue;
+
 		pkt->file_idx = lseek(infd, 0, SEEK_CUR);
 
 		pkt->active = true;
@@ -295,7 +301,7 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 		if (eof_reached) fprintf(stderr, "End of file.\n");
 
 		pkt_sn++;
-		if (pkt_sn == winsz) pkt_sn = 0; // wrap back to unused pkt_info
+		if (pkt_sn == 2*winsz) pkt_sn = 0; // wrap back to unused pkt_info
 
 		pkts_sent++;
 
@@ -333,6 +339,7 @@ int recv_server_response(int sockfd, struct sockaddr *sockaddr, socklen_t *socka
 			switch (opcode) {
 				case OP_ACK:
 					*ack_pkt_sn = get_ack_sn(pkt_buf);	// assign pkt sn to ack_pkt_sn
+					// printf("received ack %u\n", *ack_pkt_sn);
 					break;
 				case OP_ERROR:
 					// TODO: idk how this is supposed to be handled tbh so make sure it's right
@@ -367,7 +374,7 @@ int send_outfile_path(const char *outfile_path, int *path_idx, int sockfd, struc
 	memset(pkt_buf, 0, sizeof(pkt_buf));
 
 	// reset pkt info array
-	for (u_int32_t sn = 0; sn < winsz; sn++) {
+	for (u_int32_t sn = 0; sn < 2*winsz; sn++) {
 		struct pkt_ack_info *pkt = &pkt_info[sn];
 
 		if (pkt->ackd) {
@@ -436,9 +443,6 @@ int send_outfile_path(const char *outfile_path, int *path_idx, int sockfd, struc
 			return -1;
 		}
 
-		// assign opcode
-		assign_pkt_opcode(pkt_buf, OP_WR);	// reassign for logging
-
 		if (log_pkt(pkt_buf) < 0) {
 			fprintf(stderr, "myclient ~ send_outfile_path(): encountered error logging pkt info.\n");
 			return -1;
@@ -447,7 +451,7 @@ int send_outfile_path(const char *outfile_path, int *path_idx, int sockfd, struc
 		if (eop_reached) fprintf(stderr, "End of outfile path.\n");
 
 		pkt_sn++;
-		if (pkt_sn == winsz) pkt_sn = 0; // wrap back to unused pkt_info
+		if (pkt_sn == 2*winsz) pkt_sn = 0; // wrap back to unused pkt_info
 
 		pkts_sent++;
 
@@ -473,12 +477,12 @@ int log_pkt(char *pkt_buf) {
 		return -1;
 	}
 
-	if (opcode < OP_WR || opcode > OP_DATA) {
+	if (opcode < OP_WR || opcode > OP_PATH) {
 		fprintf(stderr, "myclient ~ log_pkt(): opcode %u is not supported by server.\n", opcode);
 		return -1;
 	}
 
-	char *opstring = opcode == OP_ACK ? "ACK" : (opcode == OP_WR ? "CTRL" : "DATA");
+	char *opstring = opcode == OP_ACK ? "ACK" : (opcode == OP_WR ? "CTRL" : (opcode == OP_PATH ? "PATH" : "DATA"));
 
 	u_int32_t sn = opcode == OP_WR ? 0 : (opcode == OP_ACK ? get_ack_sn(pkt_buf) : get_data_sn(pkt_buf));
 	if (sn == 0 && errno == 1) {
@@ -492,7 +496,7 @@ int log_pkt(char *pkt_buf) {
 }
 
 void reset_pkt_info(struct pkt_ack_info *pkt_info, u_int32_t winsz) {
-	for (u_int32_t sn = 0; sn < winsz; sn++) {
+	for (u_int32_t sn = 0; sn < 2*winsz; sn++) {
 		pkt_info[sn].active = false;
 		pkt_info[sn].retransmits = 0;
 		pkt_info[sn].ackd = false;
