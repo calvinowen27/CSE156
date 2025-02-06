@@ -280,8 +280,9 @@ int complete_handshake(int sockfd, char *res_buf, struct sockaddr *sockaddr, soc
 		timeout.tv_sec = LOSS_TIMEOUT_SECS;
 		FD_SET(sockfd, &fds);
 
-		if (drop_pkt(pkt_buf, *pkts_sent, droppc)) {
+		if (drop_pkt(res_buf, *pkts_sent, droppc)) {
 			(*pkts_sent) ++;
+			retransmits ++;
 			continue;
 		}
 
@@ -305,7 +306,6 @@ int complete_handshake(int sockfd, char *res_buf, struct sockaddr *sockaddr, soc
 
 				if ((ack_sn = get_ack_sn(pkt_buf)) == 0 && errno == 1) {
 					fprintf(stderr, "myserver ~ complete_handshake(): encountered an error reading ACK sn from handshake response.\n");
-					retransmits ++;
 				}
 			}
 		} else {
@@ -372,7 +372,7 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, u_
 
 	// get pkt sn
 	u_int32_t pkt_sn = get_data_sn(pkt_buf);
-	if (pkt_sn == 0 && errno == EDEVERR) {
+	if (pkt_sn == 0 && errno == 1) {
 		fprintf(stderr, "myserver ~ process_data_pkt(): encountered an error getting pkt sn from data pkt.\n");
 		return -1;
 	}
@@ -423,7 +423,9 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, u_
 		}
 	}
 
-	if (pkt_sn == (pkt_sn + client->pkt_count - 1) % client->pkt_count) {
+	// printf("pkt_sn: %u, expected_start_sn + pkt_count - 1: %u, pkt_count: %u\n", pkt_sn, client->expected_start_sn + client->pkt_count - 1, client->pkt_count);
+
+	if (pkt_sn == (client->expected_start_sn + client->winsz - 1) % client->pkt_count) {
 		if (send_client_ack(client, sockfd, pkts_sent, droppc) < 0) {
 			fprintf(stderr, "myserver ~ process_data_pkt(): encountered error sending ack to client.\n");
 			return -1;
@@ -432,6 +434,8 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, u_
 
 	return 0;
 }
+
+// TODO: distribute drops?
 
 // determines wether to drop a pkt based on pkt_count
 // prints log message if pkt is dropped
@@ -458,7 +462,7 @@ int drop_pkt(char *pkt_buf, int pkt_count, int droppc) {
 	char *opstring = opcode == OP_ACK ? "DROP ACK" : (opcode == OP_WR ? "DROP CTRL" : "DROP DATA");
 
 	u_int32_t sn = opcode == OP_WR ? 0 : (opcode == OP_ACK ? get_ack_sn(pkt_buf) : get_data_sn(pkt_buf));
-	if (sn == 0 && errno == EDEVERR) {
+	if (sn == 0 && errno == 1) {
 		fprintf(stderr, "myserver ~ drop_recvd_pkt(): encountered an error getting pkt sn from pkt.\n");
 		return -1;
 	}

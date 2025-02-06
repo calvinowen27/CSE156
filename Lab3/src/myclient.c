@@ -154,13 +154,15 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 		// update pkt info with ack
 		u_int32_t sn = start_pkt_sn;
 		struct pkt_ack_info *pkt;
-		while (sn != ack_pkt_sn) {
+		while (sn != (ack_pkt_sn + 1) % (2 * winsz)) {
 			pkt = &pkt_info[sn];
 
 			if (pkt->active) {
 				pkt->ackd = true;
 				pkt->active = false;
 			}
+
+			sn = (sn + 1) % (winsz * 2);
 		}
 
 		need_pkt_resend = ack_pkt_sn != (start_pkt_sn + winsz) % (winsz * 2);
@@ -170,6 +172,8 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 
 	return 0;
 }
+
+// TODO: don't log handshake ACK?
 
 // initiate handshake with server, which should respond with the client id
 // client id value is put in *client_id
@@ -217,6 +221,11 @@ int perform_handshake(int sockfd, const char *outfile_path, struct sockaddr *soc
 
 	if (sendto(sockfd, handshake_buf, sizeof(handshake_buf), 0, sockaddr, *sockaddr_size) < 0) {
 		fprintf(stderr, "myclient ~ perform_handshake(): client failed to send final ACK to server.\n");
+		return -1;
+	}
+
+	if (log_pkt(handshake_buf) < 0) {
+		fprintf(stderr, "myclient ~ perform_handshake(): encountered error logging pkt info.\n");
 		return -1;
 	}
 
