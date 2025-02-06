@@ -17,15 +17,14 @@ struct client_info {
 
 	u_int32_t winsz;
 	u_int32_t pkt_count;
-	struct pkt_info *pkt_win;
+	struct pkt_info *pkt_info;
 	u_int32_t expected_sn;
 	u_int32_t expected_start_sn;
-
-	u_int32_t first_unwritten_sn;
 
 	struct sockaddr *sockaddr;
 	socklen_t *sockaddr_size;
 	
+	bool ack_sent;
 	bool is_active;
 };
 

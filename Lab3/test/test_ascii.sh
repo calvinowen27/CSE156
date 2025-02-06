@@ -28,6 +28,18 @@ if [ -s diff ]; then
 	exit 1
 fi
 
+./bin/myclient 127.0.0.1 9090 4096 40 test_files/large_ascii.txt out/large_ascii_out.txt > client_out 2> client_err
+diff test_files/large_ascii.txt out/large_ascii_out.txt > diff
+
+if [ -s diff ]; then
+	echo "~~~~~~~~~~~~~~~~~~~~~~~
+	TEST FAILURE: large_ascii.txt
+~~~~~~~~~~~~~~~~~~~~~~~"
+	kill -9 $pid
+	wait $pid &>/dev/null
+	exit 1
+fi
+
 # ./bin/myclient 127.0.0.1 9090 4096 test_files/large_ascii.txt out/large_ascii_out.txt
 # diff test_files/large_ascii.txt out/large_ascii_out.txt > diff
 

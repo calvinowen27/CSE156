@@ -135,21 +135,21 @@ int client_info_init(struct client_info *client, u_int32_t client_id, char *outf
 	client->expected_sn = 0;
 	client->outfd = outfd;
 	client->outfile_path = outfile_path;
-	client->first_unwritten_sn = 0;
 	client->sockaddr = sockaddr;
 	client->sockaddr_size = sockaddr_size;
 	client->winsz = winsz;
 	client->pkt_count = winsz * 2;
+	client->ack_sent = false;
 
 	// allocate pkt_info buffer
-	client->pkt_win = calloc(sizeof(struct pkt_info), client->pkt_count);
-	if (client->pkt_win == NULL) {
-		fprintf(stderr, "myserver ~ client_info_init(): encountered an error initializing client pkt_win.\n");
+	client->pkt_info = calloc(sizeof(struct pkt_info), client->pkt_count);
+	if (client->pkt_info == NULL) {
+		fprintf(stderr, "myserver ~ client_info_init(): encountered an error initializing client pkt_info.\n");
 		return -1;	
 	}
 
 	for (u_int32_t sn = 0; sn < client->pkt_count; sn++) {
-		struct pkt_info *pkt_info = &client->pkt_win[sn];
+		struct pkt_info *pkt_info = &client->pkt_info[sn];
 
 		pkt_info->written = false;
 		pkt_info->file_idx = 0;
@@ -184,7 +184,7 @@ int terminate_client(struct client_info **clients, u_int32_t *max_client_count, 
 			client->is_active = false;
 			// free(client->ooo_file_idxs);
 			// free(client->ooo_pkt_sns);
-			free(client->pkt_win);
+			free(client->pkt_info);
 			free(client->outfile_path);
 			close(client->outfd);
 			client_found = true;

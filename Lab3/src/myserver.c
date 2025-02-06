@@ -157,7 +157,7 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int dro
 	for (u_int32_t i = 0; i < max_client_count; i++) {
 		// free(clients[i].ooo_file_idxs);
 		// free(clients[i].ooo_pkt_sns);
-		free(clients[i].pkt_win);
+		free(clients[i].pkt_info);
 	}
 
 	fprintf(stderr, "myserver ~ run(): something went wrong. Closing server.\n");
@@ -167,12 +167,16 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int dro
 // send ack to client based on what packets were received
 // return 0 on success, -1 on error
 int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int droppc) {
+	if (client->ack_sent) return 0;
+
+	u_int32_t first_unwritten_sn = client->expected_start_sn;
+
 	// find first unackd pkt
 	u_int32_t pkts_counted = 0;
-	client->first_unwritten_sn = client->expected_start_sn;
+	first_unwritten_sn = client->expected_start_sn;
 	struct pkt_info *pkt;
 	while (pkts_counted < client->winsz) {
-		pkt = &client->pkt_win[client->first_unwritten_sn];
+		pkt = &client->pkt_info[first_unwritten_sn];
 		
 		if (!pkt->written) {
 			break;
@@ -180,15 +184,18 @@ int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int 
 
 		pkt->written = false;
 		pkt->ackd = true;
+		// printf("setting %u as ackd\n", first_unwritten_sn);
 
-		client->pkt_win[(client->first_unwritten_sn + client->winsz) % client->pkt_count].ackd = false;
+		client->pkt_info[(first_unwritten_sn + client->winsz) % client->pkt_count].ackd = false;
 		
-		client->first_unwritten_sn = (client->first_unwritten_sn + 1) % client->pkt_count;
+		first_unwritten_sn = (first_unwritten_sn + 1) % client->pkt_count;
 
 		pkts_counted ++;
 	}
 
-	client->expected_start_sn = client->first_unwritten_sn;
+	// printf("first unwritten found as %u\n", first_unwritten_sn);
+
+	client->expected_start_sn = first_unwritten_sn;
 
 	// next expected is first unackd
 	client->expected_sn = client->expected_start_sn;
@@ -196,10 +203,10 @@ int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int 
 	char ack_buf[5];
 	ack_buf[0] = OP_ACK;
 
-	u_int32_t ack_sn = (client->first_unwritten_sn + client->pkt_count - 1) % client->pkt_count;
+	u_int32_t ack_sn = (first_unwritten_sn + client->pkt_count - 1) % client->pkt_count;
 
 	if (assign_ack_sn(ack_buf, ack_sn) < 0) {
-		fprintf(stderr, "myserver ~ send_client_ack(): encountered an error assigning client %u lowest sn %u to ack buf.\n", client->id, client->first_unwritten_sn);
+		fprintf(stderr, "myserver ~ send_client_ack(): encountered an error assigning client %u lowest sn %u to ack buf.\n", client->id, first_unwritten_sn);
 		return -1;
 	}
 
@@ -208,9 +215,11 @@ int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int 
 
 		return 0;
 	} else if (sendto(sockfd, ack_buf, 5, 0, client->sockaddr, *client->sockaddr_size) < 0) {
-		fprintf(stderr, "myserver ~ send_client_ack(): encountered an error sending ack to client %u with sn %u.\n", client->id, client->first_unwritten_sn);
+		fprintf(stderr, "myserver ~ send_client_ack(): encountered an error sending ack to client %u with sn %u.\n", client->id, first_unwritten_sn);
 		return -1;
 	}
+
+	client->ack_sent = true;
 
 	(*pkts_sent) ++;
 	
@@ -398,10 +407,13 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, u_
 	}
 
 	// if we've made it to here, everything is valid and client is writing data to file
-	struct pkt_info *pkt = &client->pkt_win[pkt_sn];
+	struct pkt_info *pkt = &client->pkt_info[pkt_sn];
 
 	// write based on sn, check for ooo
 	if (pkt_sn == client->expected_sn) { // normal, write bytes to outfile
+		// printf("received expected: %u\n", pkt_sn);
+		client->ack_sent = false;
+
 		if (pkt->written) {
 			lseek(client->outfd, pkt->file_idx, SEEK_SET);
 		} else {
@@ -417,6 +429,7 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, u_
 
 		client->expected_sn = (pkt_sn + 1) % client->pkt_count;
 	} else {
+		// printf("unexpected pkt recvd: %u, expected %u\n", pkt_sn, client->expected_sn);
 		if (send_client_ack(client, sockfd, pkts_sent, droppc) < 0) {
 			fprintf(stderr, "myserver ~ process_data_pkt(): encountered error sending ack to client.\n");
 			return -1;
