@@ -415,7 +415,7 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, u_
 
 		pkt->written = true;
 
-		client->expected_sn = (pkt_sn + 1) % client->winsz;
+		client->expected_sn = (pkt_sn + 1) % client->pkt_count;
 	} else {
 		if (send_client_ack(client, sockfd, pkts_sent, droppc) < 0) {
 			fprintf(stderr, "myserver ~ process_data_pkt(): encountered error sending ack to client.\n");
@@ -423,7 +423,7 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, u_
 		}
 	}
 
-	if (pkt_sn == client->expected_start_sn - 1 || (pkt_sn == client->winsz - 1 && client->expected_start_sn == 0)) {
+	if (pkt_sn == (pkt_sn + client->pkt_count - 1) % client->pkt_count) {
 		if (send_client_ack(client, sockfd, pkts_sent, droppc) < 0) {
 			fprintf(stderr, "myserver ~ process_data_pkt(): encountered error sending ack to client.\n");
 			return -1;
