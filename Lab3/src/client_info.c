@@ -150,24 +150,11 @@ int client_info_init(struct client_info *client, u_int32_t client_id, char *outf
 	for (u_int32_t sn = 0; sn < client->winsz; sn++) {
 		struct pkt_info *pkt_info = &client->pkt_win[sn];
 
-		pkt_info->seen = false;
 		pkt_info->written = false;
 		pkt_info->file_idx = 0;
 	}
 
 	client->expected_start_sn = 0;
-	
-	// client->ooo_pkt_sns = calloc(sizeof(u_int32_t), client->ooo_pkt_max_count);
-	// if (client->ooo_pkt_sns == NULL) {
-	// 	fprintf(stderr, "myserver ~ client_info_init(): encountered an error initializing client ooo_pkt_sns.\n");
-	// 	return -1;
-	// }
-
-	// client->ooo_file_idxs = calloc(sizeof(off_t), client->ooo_pkt_max_count);
-	// if (client->ooo_file_idxs == NULL) {
-	// 	fprintf(stderr, "myserver ~ client_info_init(): encountered an error initializing client ooo_file_idxs.\n");
-	// 	return -1;
-	// }
 
 	return 0;
 }

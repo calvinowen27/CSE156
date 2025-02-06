@@ -6,22 +6,25 @@
 struct pkt_info {
 	off_t file_idx;
 	bool written;
-	bool seen;
 };
 
 struct client_info {
 	u_int32_t id;
+
+	char *outfile_path;	// only saving this so it can be freed
 	int outfd;
+
+	u_int32_t winsz;
 	struct pkt_info *pkt_win;
+	u_int32_t expected_sn;
 	u_int32_t expected_start_sn;
+
 	u_int32_t first_unwritten_sn;
+
 	struct sockaddr *sockaddr;
 	socklen_t *sockaddr_size;
-	u_int32_t winsz;
-	u_int32_t expected_sn;
-	bool ack_sent;
+	
 	bool is_active;
-	char *outfile_path;	// only saving this so it can be freed
 };
 
 // initialize client array and set default values for client_info entries
