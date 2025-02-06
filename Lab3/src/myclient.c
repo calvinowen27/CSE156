@@ -64,8 +64,8 @@ int main(int argc, char **argv) {
 	char *infile_path = argv[5];															// infile path
 	char *outfile_path = argv[6];															// outfile path
 
-	if (strlen(outfile_path) > mss - MAX_HEADER_SIZE) {
-		printf("MSS argument is too small for desired output file path. MSS value specified is %d bytes and header length is %d bytes. Please specify an outfile path that is less than or equal to %d - %d = %d bytes long.\n", mss, WR_HEADER_SIZE, mss, WR_HEADER_SIZE, mss - WR_HEADER_SIZE);
+	if (strlen(outfile_path) > (mss - MAX_HEADER_SIZE) - 1) {
+		printf("MSS argument is too small for desired output file path. MSS value specified is %d bytes and header length is %d bytes. Please specify an outfile path that is less than or equal to %d - %d - 1 = %d bytes long.\n", mss, WR_HEADER_SIZE, mss, WR_HEADER_SIZE, (mss - WR_HEADER_SIZE) - 1);
 		exit(1);
 	}
 	
@@ -189,6 +189,7 @@ int perform_handshake(int sockfd, const char *outfile_path, struct sockaddr *soc
 	}
 
 	memcpy(handshake_buf + WR_HEADER_SIZE, outfile_path, strlen(outfile_path));	// copy outfile_path to pkt
+	handshake_buf[sizeof(handshake_buf) - 1] = 0; // null terminate
 
 	int recv_res = 1;
 
