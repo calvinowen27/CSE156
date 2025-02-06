@@ -280,7 +280,7 @@ int complete_handshake(int sockfd, char *res_buf, struct sockaddr *sockaddr, soc
 		timeout.tv_sec = LOSS_TIMEOUT_SECS;
 		FD_SET(sockfd, &fds);
 
-		if (drop_pkt(pkt_buf, pkts_sent, droppc)) {
+		if (drop_pkt(pkt_buf, *pkts_sent, droppc)) {
 			(*pkts_sent) ++;
 			continue;
 		}
@@ -292,13 +292,13 @@ int complete_handshake(int sockfd, char *res_buf, struct sockaddr *sockaddr, soc
 		}
 
 		if (select(sockfd + 1, &fds, NULL, NULL, &timeout) > 0) { // check there is data to be read from socket
-			memset(pkt_buf, 0, sizeof(pkt_buf));
+			memset(pkt_buf, 0, BUFFER_SIZE);
 
 			// data available at socket
 			// read into buffer
 			if ((bytes_recvd = recvfrom(sockfd, pkt_buf, BUFFER_SIZE, 0, sockaddr, sockaddr_size)) >= 0) {
 
-				if (drop_pkt(pkt_buf, pkts_recvd, droppc)) {
+				if (drop_pkt(pkt_buf, *pkts_recvd, droppc)) {
 					(*pkts_recvd) ++;
 					continue;
 				}
@@ -316,7 +316,7 @@ int complete_handshake(int sockfd, char *res_buf, struct sockaddr *sockaddr, soc
 	if (retransmits > 3) {
 		fprintf(stderr, "myserver ~ complete_handshake(): exceeded 3 retransmissions for handshake. terminating client.\n");
 		if (terminate_client(clients, max_client_count, client_id) < 0) {
-			fprintf(stderr, "my server ~ complete_handshake(): encountered error terminating client %u.\n");
+			fprintf(stderr, "my server ~ complete_handshake(): encountered error terminating client %u.\n", client_id);
 			return -1;
 		}
 	}
