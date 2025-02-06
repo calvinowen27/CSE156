@@ -125,20 +125,26 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 		pkt_info[sn].file_idx = 0;
 	}
 
+	int recv_res;
+
 	// continue while eof hasn't been reached or pkts need to be resent
 	while (!reached_eof || need_pkt_resend) {
 		need_pkt_resend = false;
 
-		// send pkt window
-		if ((pkts_sent = send_window_pkts(infd, sockfd, sockaddr, sockaddr_size, mss, winsz, client_id, start_pkt_sn, pkt_info)) < 0) {
-			fprintf(stderr, "myclient ~ send_file(): encountered an error while sending pkt window.\n");
-			return -1;
-		}
+		do {
+			// send pkt window
+			if ((pkts_sent = send_window_pkts(infd, sockfd, sockaddr, sockaddr_size, mss, winsz, client_id, start_pkt_sn, pkt_info)) < 0) {
+				fprintf(stderr, "myclient ~ send_file(): encountered an error while sending pkt window.\n");
+				return -1;
+			}
 
-		reached_eof = pkts_sent == 0; // update reached_eof
+			reached_eof = pkts_sent == 0; // update reached_eof
 
-		// wait for server response, to get ack sn
-		if (recv_server_response(sockfd, sockaddr, sockaddr_size, &ack_pkt_sn) < 0) {
+			// wait for server response, to get ack sn
+			recv_res = recv_server_response(sockfd, sockaddr, sockaddr_size, &ack_pkt_sn);
+		} while (recv_res == 1);
+
+		if (recv_res < 0) {
 			fprintf(stderr, "myclient ~ send_file(): encourntered an error while trying to receive server response.\n");
 			return -1;
 		}
@@ -149,11 +155,12 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 		for (uint32_t sn = 0; sn < winsz; sn++) {
 			struct pkt_ack_info *pkt = &pkt_info[sn];
 			if (pkt->active) {
+				// if pkt is in ack window
 				if ((ack_pkt_sn > start_pkt_sn && sn >= start_pkt_sn && sn <= ack_pkt_sn) || (ack_pkt_sn < start_pkt_sn && (sn >= start_pkt_sn || sn <= ack_pkt_sn))) {
 					pkt->ackd = true;
 					pkt->active = false;
 				} else if (pkt->retransmits > 3) {
-					fprintf(stderr, "myclient ~ send_file(): exceeded 3 retransmits for a single packet.\n");
+					printf("Exceeded retransmission limit (3) for a single packet. Exiting.\n");
 					exit(1); // TODO: make sure this is the right exit code for failure/too many retransmissions
 				} else {
 					need_pkt_resend = true;
@@ -173,7 +180,7 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 // return 0 on success, -1 on error
 int perform_handshake(int sockfd, const char *outfile_path, struct sockaddr *sockaddr, socklen_t *sockaddr_size, uint32_t *client_id, uint32_t winsz) {
 	// construct WR packet
-	char handshake_buf[WR_HEADER_SIZE + strlen(outfile_path) + 1];				// null terminated and opcode both 1 byte
+	char handshake_buf[WR_HEADER_SIZE + strlen(outfile_path)];				// null terminated and opcode both 1 byte
 	handshake_buf[0] = OP_WR;										// set WR opcode
 
 	if (assign_wr_winsz(handshake_buf, winsz) < 0) {
@@ -181,7 +188,6 @@ int perform_handshake(int sockfd, const char *outfile_path, struct sockaddr *soc
 		return -1;
 	}
 
-	handshake_buf[sizeof(handshake_buf) - 1] = 0;					// null terminate
 	memcpy(handshake_buf + WR_HEADER_SIZE, outfile_path, strlen(outfile_path));	// copy outfile_path to pkt
 
 	int recv_res = 1;
@@ -227,6 +233,10 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 			pkt->ackd = false;
 		} else if (pkt->active) {
 			pkt->retransmits ++;
+			if (pkt->retransmits > 3) {
+				printf("Exceeded retransmission limit (3) for a single packet. Exiting.\n");
+				exit(1); // TODO: check exit code
+			}
 		}
 	}
 
@@ -246,6 +256,7 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 
 	while (pkts_sent < winsz && !eof_reached) { // only send max winsz packets
 		pkt = &pkt_info[pkt_sn];
+
 		pkt->file_idx = lseek(infd, 0, SEEK_CUR);
 
 		pkt->active = true;
@@ -286,10 +297,10 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 
 		if (eof_reached) fprintf(stderr, "End of file.\n");
 
-		pkt_sn++;
+		pkt_sn ++;
 		if (pkt_sn == winsz) pkt_sn = 0; // wrap back to unused pkt_info
 
-		pkts_sent++;
+		pkts_sent ++;
 
 		memset(pkt_buf, 0, sizeof(pkt_buf));
 	}
