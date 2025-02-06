@@ -20,19 +20,19 @@ void logerr(const char *err) {
 
 // split uint32_t into uint8_t[4]
 // must free pointer when done using it
-uint8_t *split_bytes(u_int32_t val) {
-	uint8_t *res = calloc(4, sizeof(uint8_t *));
+u_int8_t *split_bytes(u_int32_t val) {
+	u_int8_t *res = calloc(4, sizeof(u_int8_t *));
 
-	res[0] = (uint8_t) ((val & 0xff000000) >> 24);
-	res[1] = (uint8_t) ((val & 0x00ff0000) >> 16);
-	res[2] = (uint8_t) ((val & 0x0000ff00) >> 8);
-	res[3] = (uint8_t) (val & 0x000000ff);
+	res[0] = (u_int8_t) ((val & 0xff000000) >> 24);
+	res[1] = (u_int8_t) ((val & 0x00ff0000) >> 16);
+	res[2] = (u_int8_t) ((val & 0x0000ff00) >> 8);
+	res[3] = (u_int8_t) (val & 0x000000ff);
 
 	return res;
 }
 
 // reuinite uint8_t[4] into uin32_t
-u_int32_t reunite_bytes(uint8_t *bytes) {
+u_int32_t reunite_bytes(u_int8_t *bytes) {
 	u_int32_t res;
 	res = (u_int32_t) ((bytes[0] << 24) & 0xff000000) | (u_int32_t) ((bytes[1] << 16) & 0x00ff0000) | (u_int32_t) ((bytes[2] << 8) & 0x0000ff00) | (u_int32_t) (bytes[3] & 0x000000ff);
 	return res; 
@@ -175,7 +175,7 @@ int init_socket(struct sockaddr_in *sockaddr, const char *ip_addr, int port, int
 // assign opcode to first byte of pkt_buf
 // return 0 on success, -1 on error
 int assign_pkt_opcode(char *pkt_buf, int opcode) {
-	pkt_buf[0] = (uint8_t)opcode;
+	pkt_buf[0] = (u_int8_t)opcode;
 	return 0;
 }
 
@@ -187,7 +187,7 @@ int assign_wr_winsz(char *pkt_buf, u_int32_t winsz) {
 		return -1;
 	}
 
-	uint8_t *bytes = split_bytes(winsz);
+	u_int8_t *bytes = split_bytes(winsz);
 
 	if (bytes == NULL) {
 		fprintf(stderr, "utils ~ assign_wr_winsz(): something went wrong when splitting bytes of client_id.\n");
@@ -213,7 +213,7 @@ int assign_pkt_client_id(char *pkt_buf, u_int32_t client_id) {
 		return -1;
 	}
 
-	uint8_t *bytes = split_bytes(client_id);
+	u_int8_t *bytes = split_bytes(client_id);
 
 	if (bytes == NULL) {
 		fprintf(stderr, "utils ~ assign_pkt_client_id(): something went wrong when splitting bytes of client_id.\n");
@@ -239,7 +239,7 @@ int assign_ack_sn(char *pkt_buf, u_int32_t sn) {
 		return -1;
 	}
 
-	uint8_t *bytes = split_bytes(sn);
+	u_int8_t *bytes = split_bytes(sn);
 
 	if (bytes == NULL) {
 		fprintf(stderr, "utils ~ assign_ack_sn(): something went wrong when splitting bytes of client_id.\n");
@@ -265,7 +265,7 @@ int assign_pkt_sn(char *pkt_buf, u_int32_t pkt_sn) {
 		return -1;
 	}
 
-	uint8_t *bytes = split_bytes(pkt_sn);
+	u_int8_t *bytes = split_bytes(pkt_sn);
 
 	if (bytes == NULL) {
 		fprintf(stderr, "utils ~ assign_pkt_sn(): something went wrong when splitting bytes of pkt_sn.\n");
@@ -291,7 +291,7 @@ int assign_pkt_pyld_sz(char *pkt_buf, u_int32_t pyld_sz) {
 		return -1;
 	}
 
-	uint8_t *bytes = split_bytes(pyld_sz);
+	u_int8_t *bytes = split_bytes(pyld_sz);
 
 	if (bytes == NULL) {
 		fprintf(stderr, "utils ~ assign_pkt_pyld_sz(): something went wrong when splitting bytes of pyld_sz.\n");
@@ -329,7 +329,7 @@ u_int32_t get_write_req_winsz(char *pkt_buf) {
 	// pkt_sn occurs right after opcode for ack, not at all for error
 	// check opcode for ack, otherwise return 0
 	if ((int)pkt_buf[0] == OP_WR) {
-		uint8_t bytes[4];
+		u_int8_t bytes[4];
 		bytes[0] = pkt_buf[1];
 		bytes[1] = pkt_buf[2];
 		bytes[2] = pkt_buf[3];
@@ -352,7 +352,7 @@ u_int32_t get_data_client_id(char *pkt_buf) {
 	// pkt_sn occurs right after opcode for ack, not at all for error
 	// check opcode for ack, otherwise return 0
 	if ((int)pkt_buf[0] == OP_DATA) {
-		uint8_t bytes[4];
+		u_int8_t bytes[4];
 		bytes[0] = pkt_buf[1];
 		bytes[1] = pkt_buf[2];
 		bytes[2] = pkt_buf[3];
@@ -375,7 +375,7 @@ u_int32_t get_data_sn(char *pkt_buf) {
 	// pkt_sn occurs right after opcode for ack, not at all for error
 	// check opcode for ack, otherwise return 0
 	if ((int)pkt_buf[0] == OP_DATA) {
-		uint8_t bytes[4];
+		u_int8_t bytes[4];
 		bytes[0] = pkt_buf[5];
 		bytes[1] = pkt_buf[6];
 		bytes[2] = pkt_buf[7];
@@ -399,7 +399,7 @@ u_int32_t get_data_pyld_sz(char *pkt_buf) {
 	// pkt_sn occurs right after opcode for ack, not at all for error
 	// check opcode for ack, otherwise return 0
 	if ((int)pkt_buf[0] == OP_DATA) {
-		uint8_t bytes[4];
+		u_int8_t bytes[4];
 		bytes[0] = pkt_buf[9];
 		bytes[1] = pkt_buf[10];
 		bytes[2] = pkt_buf[11];
@@ -423,7 +423,7 @@ u_int32_t get_ack_sn(char *pkt_buf) {
 	// pkt_sn occurs right after opcode for ack, not at all for error
 	// check opcode for ack, otherwise return 0
 	if ((int)pkt_buf[0] == OP_ACK) {
-		uint8_t bytes[4];
+		u_int8_t bytes[4];
 		bytes[0] = pkt_buf[1];
 		bytes[1] = pkt_buf[2];
 		bytes[2] = pkt_buf[3];

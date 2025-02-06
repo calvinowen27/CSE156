@@ -83,13 +83,13 @@ int echo_data(int sockfd, struct sockaddr *sockaddr, socklen_t *sock_size) {
 		memset(buf[i], 0, sizeof(buf[i]));
 	}
 
-	uint8_t next_client_id = 2, serving_client_id = 0;
+	u_int8_t next_client_id = 2, serving_client_id = 0;
 
 	int packets_recvd = 0;
 
 	int bytes_recvd, waiting_for_client = 1;
 	while ((bytes_recvd = recvfrom(sockfd, buf[packets_recvd], BUFFER_SIZE, 0, sockaddr, sock_size)) >= 0) {
-		if ((uint8_t)buf[packets_recvd][1] == serving_client_id) {
+		if ((u_int8_t)buf[packets_recvd][1] == serving_client_id) {
 			if (bytes_recvd > HEADER_SIZE) { // received good packet, echo back
 
 				packets_recvd += 1;

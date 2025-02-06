@@ -9,10 +9,10 @@ void logerr(const char *);
 
 // split uint32_t into uint8_t[4]
 // must free pointer when done using it
-uint8_t *split_bytes(u_int32_t val);
+u_int8_t *split_bytes(u_int32_t val);
 
 // reuinite uint8_t[4] into uin32_t
-u_int32_t reunite_bytes(uint8_t *bytes);
+u_int32_t reunite_bytes(u_int8_t *bytes);
 
 // read into buf from sockfd. reads n bytes or the size of buf, whichever is smaller
 // return bytes read on success, -1 for error
