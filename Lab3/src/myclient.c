@@ -115,7 +115,7 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 
 	// need to resend pkts if ack sn < last pkt sn sent
 	// send pkts from ack sn + 1
-	u_int32_t pkts_sent;
+	int pkts_sent;
 
 	struct pkt_ack_info pkt_info[2 * winsz];
 	for (u_int32_t sn = 0; sn < 2 * winsz; sn++) {
@@ -268,10 +268,10 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 	bool eof_reached = false;
 
 	u_int32_t pkt_sn = start_pkt_sn;
-	u_int32_t pkts_sent = 0;
+	int pkts_sent = 0;
 	int bytes_read;
 
-	while (pkts_sent < winsz && !eof_reached) { // only send max winsz packets
+	while ((u_int32_t)pkts_sent < winsz && !eof_reached) { // only send max winsz packets
 		pkt = &pkt_info[pkt_sn];
 
 		pkt->file_idx = lseek(infd, 0, SEEK_CUR);
