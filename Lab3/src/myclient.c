@@ -63,6 +63,11 @@ int main(int argc, char **argv) {
 
 	char *infile_path = argv[5];															// infile path
 	char *outfile_path = argv[6];															// outfile path
+
+	if (strlen(outfile_path) > mss - MAX_HEADER_SIZE) {
+		printf("MSS argument is too small for desired output file path. MSS value specified is %d bytes and header length is %d bytes. Please specify an outfile path that is less than or equal to %d - %d = %d bytes long.\n", mss, WR_HEADER_SIZE, mss, WR_HEADER_SIZE, mss - WR_HEADER_SIZE);
+		exit(1);
+	}
 	
 	int infd = open(infile_path, O_RDONLY, 0664);
 	if (infd < 0) {
