@@ -20,7 +20,7 @@ void logerr(const char *err) {
 
 // split uint32_t into uint8_t[4]
 // must free pointer when done using it
-uint8_t *split_bytes(uint32_t val) {
+uint8_t *split_bytes(u_int32_t val) {
 	uint8_t *res = calloc(4, sizeof(uint8_t *));
 
 	res[0] = (uint8_t) ((val & 0xff000000) >> 24);
@@ -32,9 +32,9 @@ uint8_t *split_bytes(uint32_t val) {
 }
 
 // reuinite uint8_t[4] into uin32_t
-uint32_t reunite_bytes(uint8_t *bytes) {
-	uint32_t res;
-	res = (uint32_t) ((bytes[0] << 24) & 0xff000000) | (uint32_t) ((bytes[1] << 16) & 0x00ff0000) | (uint32_t) ((bytes[2] << 8) & 0x0000ff00) | (uint32_t) (bytes[3] & 0x000000ff);
+u_int32_t reunite_bytes(uint8_t *bytes) {
+	u_int32_t res;
+	res = (u_int32_t) ((bytes[0] << 24) & 0xff000000) | (u_int32_t) ((bytes[1] << 16) & 0x00ff0000) | (u_int32_t) ((bytes[2] << 8) & 0x0000ff00) | (u_int32_t) (bytes[3] & 0x000000ff);
 	return res; 
 }
 
@@ -181,7 +181,7 @@ int assign_pkt_opcode(char *pkt_buf, int opcode) {
 
 // assign winsz to header bytes of pkt_buf
 // return 0 on success, -1 on error
-int assign_wr_winsz(char *pkt_buf, uint32_t winsz) {
+int assign_wr_winsz(char *pkt_buf, u_int32_t winsz) {
 	if (pkt_buf == NULL) {
 		fprintf(stderr, "utils ~ assign_wr_winsz(): cannot pass NULL ptr to pkt_buf.\n");
 		return -1;
@@ -207,7 +207,7 @@ int assign_wr_winsz(char *pkt_buf, uint32_t winsz) {
 
 // assign client_id to header bytes of pkt_buf
 // return 0 on success, -1 on error
-int assign_pkt_client_id(char *pkt_buf, uint32_t client_id) {
+int assign_pkt_client_id(char *pkt_buf, u_int32_t client_id) {
 	if (pkt_buf == NULL) {
 		fprintf(stderr, "utils ~ assign_pkt_client_id(): cannot pass NULL ptr to pkt_buf.\n");
 		return -1;
@@ -233,7 +233,7 @@ int assign_pkt_client_id(char *pkt_buf, uint32_t client_id) {
 
 // assign ack sn to header bytes of pkt_buf
 // return 0 on success, -1 on error
-int assign_ack_sn(char *pkt_buf, uint32_t sn) {
+int assign_ack_sn(char *pkt_buf, u_int32_t sn) {
 	if (pkt_buf == NULL) {
 		fprintf(stderr, "utils ~ assign_ack_sn(): cannot pass NULL ptr to pkt_buf.\n");
 		return -1;
@@ -259,7 +259,7 @@ int assign_ack_sn(char *pkt_buf, uint32_t sn) {
 
 // assign pkt_sn to header bytes of pkt_buf
 // return 0 on success, -1 on error
-int assign_pkt_sn(char *pkt_buf, uint32_t pkt_sn) {
+int assign_pkt_sn(char *pkt_buf, u_int32_t pkt_sn) {
 	if (pkt_buf == NULL) {
 		fprintf(stderr, "utils ~ assign_pkt_sn(): cannot pass NULL ptr to pkt_buf.\n");
 		return -1;
@@ -285,7 +285,7 @@ int assign_pkt_sn(char *pkt_buf, uint32_t pkt_sn) {
 
 // assign pyld_sz to header bytes of pkt_buf
 // return 0 on success, -1 on error
-int assign_pkt_pyld_sz(char *pkt_buf, uint32_t pyld_sz) {
+int assign_pkt_pyld_sz(char *pkt_buf, u_int32_t pyld_sz) {
 	if (pkt_buf == NULL) {
 		fprintf(stderr, "utils ~ assign_pkt_pyld_sz(): cannot pass NULL ptr to pkt_buf.\n");
 		return -1;
@@ -320,13 +320,13 @@ int get_pkt_opcode(char *pkt_buf) {
 }
 
 // returns window size of pkt_buf, 0 on error
-uint32_t get_write_req_winsz(char *pkt_buf) {
+u_int32_t get_write_req_winsz(char *pkt_buf) {
 	if (pkt_buf == NULL) {
 		fprintf(stderr, "utils ~ get_write_req_window_sz(): cannot pass NULL ptr to pkt_buf.\n");
 		return 0;
 	}
 
-	uint32_t res;
+	u_int32_t res;
 
 	// pkt_sn occurs right after opcode for ack, not at all for error
 	// check opcode for ack, otherwise return 0
@@ -351,13 +351,13 @@ uint32_t get_write_req_winsz(char *pkt_buf) {
 }
 
 // returns client id of pkt_buf, 0 on error
-uint32_t get_data_client_id(char *pkt_buf) {
+u_int32_t get_data_client_id(char *pkt_buf) {
 	if (pkt_buf == NULL) {
 		fprintf(stderr, "utils ~ get_data_client_id(): cannot pass NULL ptr to pkt_buf.\n");
 		return 0;
 	}
 
-	uint32_t res;
+	u_int32_t res;
 
 	// pkt_sn occurs right after opcode for ack, not at all for error
 	// check opcode for ack, otherwise return 0
@@ -382,13 +382,13 @@ uint32_t get_data_client_id(char *pkt_buf) {
 }
 
 // returns pkt sn of pkt_buf if data pkt, 0 on error and sets errno to EDEVERR
-uint32_t get_data_sn(char *pkt_buf) {
+u_int32_t get_data_sn(char *pkt_buf) {
 	if (pkt_buf == NULL) {
 		fprintf(stderr, "utils ~ get_data_sn(): cannot pass NULL ptr to pkt_buf.\n");
 		return 0;
 	}
 
-	uint32_t res;
+	u_int32_t res;
 
 	// pkt_sn occurs right after opcode for ack, not at all for error
 	// check opcode for ack, otherwise return 0
@@ -415,13 +415,13 @@ uint32_t get_data_sn(char *pkt_buf) {
 }
 
 // returns payload size of pkt_buf if data pkt, 0xffffffff on error
-uint32_t get_data_pyld_sz(char *pkt_buf) {
+u_int32_t get_data_pyld_sz(char *pkt_buf) {
 	if (pkt_buf == NULL) {
 		fprintf(stderr, "utils ~ get_data_pyld_sz(): cannot pass NULL ptr to pkt_buf.\n");
 		return 0xffffffff;
 	}
 
-	uint32_t res;
+	u_int32_t res;
 
 	// pkt_sn occurs right after opcode for ack, not at all for error
 	// check opcode for ack, otherwise return 0
@@ -447,13 +447,13 @@ uint32_t get_data_pyld_sz(char *pkt_buf) {
 
 // returns pkt sn of pkt_buf, 0 on error
 // can be used to get client ID from server, server assigns pkt_sn field to client ID when accepting handshake
-uint32_t get_ack_sn(char *pkt_buf) {
+u_int32_t get_ack_sn(char *pkt_buf) {
 	if (pkt_buf == NULL) {
 		fprintf(stderr, "utils ~ get_ack_sn(): cannot pass NULL ptr to pkt_buf.\n");
 		return 0;
 	}
 
-	uint32_t res;
+	u_int32_t res;
 
 	// pkt_sn occurs right after opcode for ack, not at all for error
 	// check opcode for ack, otherwise return 0
