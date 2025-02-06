@@ -6,6 +6,7 @@
 struct pkt_info {
 	off_t file_idx;
 	bool written;
+	bool ackd;
 };
 
 struct client_info {
@@ -15,6 +16,7 @@ struct client_info {
 	int outfd;
 
 	u_int32_t winsz;
+	u_int32_t pkt_count;
 	struct pkt_info *pkt_win;
 	u_int32_t expected_sn;
 	u_int32_t expected_start_sn;

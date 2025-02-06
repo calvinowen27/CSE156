@@ -139,19 +139,21 @@ int client_info_init(struct client_info *client, u_int32_t client_id, char *outf
 	client->sockaddr = sockaddr;
 	client->sockaddr_size = sockaddr_size;
 	client->winsz = winsz;
+	client->pkt_count = winsz * 2;
 
 	// allocate pkt_info buffer
-	client->pkt_win = calloc(sizeof(struct pkt_info), client->winsz);
+	client->pkt_win = calloc(sizeof(struct pkt_info), client->pkt_count);
 	if (client->pkt_win == NULL) {
 		fprintf(stderr, "myserver ~ client_info_init(): encountered an error initializing client pkt_win.\n");
 		return -1;	
 	}
 
-	for (u_int32_t sn = 0; sn < client->winsz; sn++) {
+	for (u_int32_t sn = 0; sn < client->pkt_count; sn++) {
 		struct pkt_info *pkt_info = &client->pkt_win[sn];
 
 		pkt_info->written = false;
 		pkt_info->file_idx = 0;
+		pkt_info->ackd = false;
 	}
 
 	client->expected_start_sn = 0;

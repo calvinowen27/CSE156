@@ -173,17 +173,17 @@ int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int 
 	struct pkt_info *pkt;
 	while (pkts_counted < client->winsz) {
 		pkt = &client->pkt_win[client->first_unwritten_sn];
-		// fprintf(stderr, "pkt %u written: %s\n", client->first_unwritten_sn, pkt->written ? "true" : "false");
 		
 		if (!pkt->written) {
 			break;
 		}
 
 		pkt->written = false;
+		pkt->ackd = true;
 
-		client->first_unwritten_sn ++;
-
-		if (client->first_unwritten_sn == client->winsz) client->first_unwritten_sn = 0;
+		client->pkt_win[(client->first_unwritten_sn + client->winsz) % client->pkt_count].ackd = false;
+		
+		client->first_unwritten_sn = (client->first_unwritten_sn + 1) % client->pkt_count;
 
 		pkts_counted ++;
 	}
@@ -195,7 +195,9 @@ int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int 
 
 	char ack_buf[5];
 	ack_buf[0] = OP_ACK;
-	u_int32_t ack_sn = client->first_unwritten_sn == 0 ? client->winsz - 1 : client->first_unwritten_sn - 1;
+
+	u_int32_t ack_sn = (client->first_unwritten_sn + client->pkt_count - 1) % client->pkt_count;
+
 	if (assign_ack_sn(ack_buf, ack_sn) < 0) {
 		fprintf(stderr, "myserver ~ send_client_ack(): encountered an error assigning client %u lowest sn %u to ack buf.\n", client->id, client->first_unwritten_sn);
 		return -1;
@@ -279,7 +281,7 @@ int complete_handshake(int sockfd, char *res_buf, struct sockaddr *sockaddr, soc
 		FD_SET(sockfd, &fds);
 
 		if (drop_pkt(pkt_buf, pkts_sent, droppc)) {
-			pkts_sent ++;
+			(*pkts_sent) ++;
 			continue;
 		}
 
@@ -297,7 +299,7 @@ int complete_handshake(int sockfd, char *res_buf, struct sockaddr *sockaddr, soc
 			if ((bytes_recvd = recvfrom(sockfd, pkt_buf, BUFFER_SIZE, 0, sockaddr, sockaddr_size)) >= 0) {
 
 				if (drop_pkt(pkt_buf, pkts_recvd, droppc)) {
-					pkts_recvd ++;
+					(*pkts_recvd) ++;
 					continue;
 				}
 
