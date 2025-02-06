@@ -117,8 +117,8 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 	// send pkts from ack sn + 1
 	u_int32_t pkts_sent;
 
-	struct pkt_ack_info pkt_info[winsz];
-	for (u_int32_t sn = 0; sn < winsz; sn++) {
+	struct pkt_ack_info pkt_info[2 * winsz];
+	for (u_int32_t sn = 0; sn < 2 * winsz; sn++) {
 		pkt_info[sn].active = false;
 		pkt_info[sn].retransmits = 0;
 		pkt_info[sn].ackd = false;
@@ -152,24 +152,20 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 		if (reached_eof) break;
 
 		// update pkt info with ack
-		for (u_int32_t sn = 0; sn < winsz; sn++) {
-			struct pkt_ack_info *pkt = &pkt_info[sn];
+		u_int32_t sn = start_pkt_sn;
+		struct pkt_ack_info *pkt;
+		while (sn != ack_pkt_sn) {
+			pkt = &pkt_info[sn];
+
 			if (pkt->active) {
-				// if pkt is in ack window
-				if ((ack_pkt_sn > start_pkt_sn && sn >= start_pkt_sn && sn <= ack_pkt_sn) || (ack_pkt_sn < start_pkt_sn && (sn >= start_pkt_sn || sn <= ack_pkt_sn))) {
-					pkt->ackd = true;
-					pkt->active = false;
-				} else if (pkt->retransmits > 3) {
-					printf("Exceeded retransmission limit (3) for a single packet. Exiting.\n");
-					exit(1); // TODO: make sure this is the right exit code for failure/too many retransmissions
-				} else {
-					need_pkt_resend = true;
-				}
+				pkt->ackd = true;
+				pkt->active = false;
 			}
 		}
 
-		start_pkt_sn = ack_pkt_sn + 1;
-		if (start_pkt_sn == winsz) start_pkt_sn = 0; // wrap back
+		need_pkt_resend = ack_pkt_sn != (start_pkt_sn + winsz) % (winsz * 2);
+
+		start_pkt_sn = (ack_pkt_sn + 1) % (winsz * 2);
 	}
 
 	return 0;
@@ -236,7 +232,7 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 	memset(pkt_buf, 0, sizeof(pkt_buf));
 
 	// reset pkt info array
-	for (u_int32_t sn = 0; sn < winsz; sn++) {
+	for (u_int32_t sn = 0; sn < 2 * winsz; sn++) {
 		struct pkt_ack_info *pkt = &pkt_info[sn];
 
 		if (pkt->ackd) {
@@ -309,8 +305,7 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 
 		if (eof_reached) fprintf(stderr, "End of file.\n");
 
-		pkt_sn ++;
-		if (pkt_sn == winsz) pkt_sn = 0; // wrap back to unused pkt_info
+		pkt_sn = (pkt_sn + 1) % (2 * winsz);
 
 		pkts_sent ++;
 
