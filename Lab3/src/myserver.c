@@ -69,7 +69,7 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int dro
 	//			reset sn maps (client id:highest sn)
 
 	// init pkt buffer
-	char *pkt_buf = malloc(sizeof(char) * BUFFER_SIZE);
+	char pkt_buf[BUFFER_SIZE];
 
 	uint32_t max_client_count = START_CLIENTS;
 
@@ -113,7 +113,7 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int dro
 				
 				switch (opcode) {
 					case OP_WR:
-						if (process_write_req(sockfd, sockaddr, sockaddr_size, pkt_buf, &clients, &max_client_count, next_client_id) < 0) {
+						if (process_write_req(sockfd, sockaddr, sockaddr_size, pkt_buf, &clients, &max_client_count, next_client_id, &pkts_sent, &pkts_recvd, droppc) < 0) {
 							fprintf(stderr, "myserver ~ run(): encountered error processing write request.\n");
 							return -1;
 						}
@@ -158,8 +158,6 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int dro
 		// free(clients[i].ooo_pkt_sns);
 		free(clients[i].pkt_win);
 	}
-
-	free(pkt_buf);
 
 	fprintf(stderr, "myserver ~ run(): something went wrong. Closing server.\n");
 	return -1; // TODO: check if exit code is needed
@@ -222,8 +220,8 @@ int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int 
 
 // initialize client connection with outfile and next client_id, send response to client with client_id
 // return 0 on success, -1 on error
-int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, char *pkt_buf, struct client_info **clients, uint32_t *max_client_count, uint32_t client_id) {
-	if (clients == NULL || *clients == NULL) {
+int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, char *pkt_buf, struct client_info **clients, uint32_t *max_client_count, uint32_t client_id, int *pkts_sent, int *pkts_recvd, int droppc) {
+	if (clients == NULL) {
 		fprintf(stderr, "myserver ~ process_write_req(): invalid ptr passed to clients parameter.\n");
 		return -1;
 	}
@@ -253,18 +251,12 @@ int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr
 	char res_buf[1 + CID_BYTES];
 	res_buf[0] = OP_ACK;
 
-	uint8_t *cid_bytes = split_bytes(client_id);
-	if (cid_bytes == NULL) {
-		fprintf(stderr, "myserver ~ process_write_req(): something went wrong splitting client_id bytes.\n");
+	if (assign_ack_sn(res_buf, client_id) < 0) {
+		fprintf(stderr, "myserver ~ process_write_req(): encountered error assigning client ID bytes to response pkt.\n");
 		return -1;
 	}
 
-	res_buf[1] = cid_bytes[0];
-	res_buf[2] = cid_bytes[1];
-	res_buf[3] = cid_bytes[2];
-	res_buf[4] = cid_bytes[3];
-
-	free(cid_bytes);
+	complete_handshake(sockfd, res_buf, sockaddr, sockaddr_size, pkt_buf, client_id);
 
 	// send ack with client id back to client
 	if (sendto(sockfd, res_buf, sizeof(res_buf), 0, sockaddr, *sockaddr_size) < 0) {
@@ -273,6 +265,14 @@ int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr
 	}
 
 	return 0;
+}
+
+int complete_handshake(int sockfd, char *res_buf, struct sockaddr *sockaddr, socklen_t *sockaddr_size, char *pkt_buf, u_int32_t client_id) {
+	// send ack with client id back to client
+	if (sendto(sockfd, res_buf, sizeof(res_buf), 0, sockaddr, *sockaddr_size) < 0) {
+		fprintf(stderr, "myserver ~ process_write_req(): failed to send connection acceptance pkt to client.\n");
+		return -1;
+	}
 }
 
 // perform writing actions from a data pkt sent by known client
