@@ -242,12 +242,6 @@ int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr
 	char *outfile_path = calloc(strlen(pkt_buf + WR_HEADER_SIZE) + 1, sizeof(char));
 	memcpy(outfile_path, pkt_buf + WR_HEADER_SIZE, strlen(pkt_buf + WR_HEADER_SIZE));
 
-	// accept client, initializing all client_info data and opening outfile for writing
-	if (accept_client(clients, max_client_count, client_id, outfile_path, sockaddr, sockaddr_size, winsz) < 0) {
-		fprintf(stderr, "myserver ~ process_write_req(): encountered error while accepting client %u.\n", client_id);
-		return -1;
-	}
-
 	// create response buffer with ACK opcode and client_id in rest of bytes
 	char res_buf[1 + CID_BYTES];
 	res_buf[0] = OP_ACK;
@@ -257,18 +251,21 @@ int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr
 		return -1;
 	}
 
-	complete_handshake(sockfd, res_buf, sockaddr, sockaddr_size, pkt_buf, client_id, pkts_sent, pkts_recvd, droppc);
+	if (complete_handshake(sockfd, res_buf, sockaddr, sockaddr_size, pkt_buf, clients, max_client_count, client_id, pkts_sent, pkts_recvd, droppc) < 0) {
+		fprintf(stderr, "myserver ~ process_write_req(): encountered error completing handshake with client %u.\n", client_id);
+		return -1;
+	}
 
-	// send ack with client id back to client
-	if (sendto(sockfd, res_buf, sizeof(res_buf), 0, sockaddr, *sockaddr_size) < 0) {
-		fprintf(stderr, "myserver ~ process_write_req(): failed to send connection acceptance pkt to client.\n");
+	// accept client, initializing all client_info data and opening outfile for writing
+	if (accept_client(clients, max_client_count, client_id, outfile_path, sockaddr, sockaddr_size, winsz) < 0) {
+		fprintf(stderr, "myserver ~ process_write_req(): encountered error while accepting client %u.\n", client_id);
 		return -1;
 	}
 
 	return 0;
 }
 
-int complete_handshake(int sockfd, char *res_buf, struct sockaddr *sockaddr, socklen_t *sockaddr_size, char *pkt_buf, u_int32_t client_id, int *pkts_sent, int *pkts_recvd, int droppc) {
+int complete_handshake(int sockfd, char *res_buf, struct sockaddr *sockaddr, socklen_t *sockaddr_size, char *pkt_buf, struct client_info **clients, u_int32_t *max_client_count, u_int32_t client_id, int *pkts_sent, int *pkts_recvd, int droppc) {
 	// configure fds and timeout for select() call
 	fd_set fds;
 	FD_SET(sockfd, &fds);
@@ -280,10 +277,15 @@ int complete_handshake(int sockfd, char *res_buf, struct sockaddr *sockaddr, soc
 	u_int32_t ack_sn = 0;
 	int retransmits = 0;
 
-	while (ack_sn != client_id) {
+	while (ack_sn != client_id && retransmits <= 3) {
 		// reset timeout
 		timeout.tv_sec = LOSS_TIMEOUT_SECS;
 		FD_SET(sockfd, &fds);
+
+		if (drop_pkt(pkt_buf, pkts_sent, droppc)) {
+			pkts_sent ++;
+			continue;
+		}
 
 		// send ack with client id back to client
 		if (sendto(sockfd, res_buf, sizeof(res_buf), 0, sockaddr, *sockaddr_size) < 0) {
@@ -292,6 +294,8 @@ int complete_handshake(int sockfd, char *res_buf, struct sockaddr *sockaddr, soc
 		}
 
 		if (select(sockfd + 1, &fds, NULL, NULL, &timeout) > 0) { // check there is data to be read from socket
+			memset(pkt_buf, 0, sizeof(pkt_buf));
+
 			// data available at socket
 			// read into buffer
 			if ((bytes_recvd = recvfrom(sockfd, pkt_buf, BUFFER_SIZE, 0, sockaddr, sockaddr_size)) >= 0) {
@@ -300,9 +304,26 @@ int complete_handshake(int sockfd, char *res_buf, struct sockaddr *sockaddr, soc
 					pkts_recvd ++;
 					continue;
 				}
+
+				if ((ack_sn = get_ack_sn(pkt_buf)) == 0 && errno == 1) {
+					fprintf(stderr, "myserver ~ complete_handshake(): encountered an error reading ACK sn from handshake response.\n");
+					retransmits ++;
+				}
 			}
+		} else {
+			retransmits ++;
 		}
 	}
+
+	if (retransmits > 3) {
+		fprintf(stderr, "myserver ~ complete_handshake(): exceeded 3 retransmissions for handshake. terminating client.\n");
+		if (terminate_client(clients, max_client_count, client_id) < 0) {
+			fprintf(stderr, "my server ~ complete_handshake(): encountered error terminating client %u.\n");
+			return -1;
+		}
+	}
+
+	return 0;
 }
 
 // perform writing actions from a data pkt sent by known client

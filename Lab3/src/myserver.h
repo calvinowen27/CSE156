@@ -14,6 +14,8 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int dro
 // return 0 on success, -1 on error
 int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, char *pkt_buf, struct client_info **clients, u_int32_t *max_client_count, u_int32_t client_id, int *pkts_sent, int *pkts_recvd, int droppc);
 
+int complete_handshake(int sockfd, char *res_buf, struct sockaddr *sockaddr, socklen_t *sockaddr_size, char *pkt_buf, struct client_info **clients, u_int32_t *max_client_count, u_int32_t client_id, int *pkts_sent, int *pkts_recvd, int droppc);
+
 // perform writing actions from a data pkt sent by known client
 // if payload size == 0, terminate client connection
 // if client unrecognized, don't do anything
