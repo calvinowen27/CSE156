@@ -176,7 +176,7 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 // return 0 on success, -1 on error
 int perform_handshake(int sockfd, const char *outfile_path, struct sockaddr *sockaddr, socklen_t *sockaddr_size, u_int32_t *client_id, u_int32_t winsz) {
 	// construct WR packet
-	char handshake_buf[WR_HEADER_SIZE + strlen(outfile_path)];				// null terminated and opcode both 1 byte
+	char handshake_buf[WR_HEADER_SIZE + strlen(outfile_path) + 1];				// null terminated and opcode both 1 byte
 	handshake_buf[0] = OP_WR;										// set WR opcode
 
 	if (assign_wr_winsz(handshake_buf, winsz) < 0) {
@@ -387,7 +387,7 @@ int log_pkt(char *pkt_buf) {
 		return -1;
 	}
 
-	char *opstring = opcode == OP_ACK ? "ACK" : (OP_WR ? "CTRL" : "DATA");
+	char *opstring = opcode == OP_ACK ? "ACK" : (opcode == OP_WR ? "CTRL" : "DATA");
 
 	u_int32_t sn = opcode == OP_WR ? 0 : (opcode == OP_ACK ? get_ack_sn(pkt_buf) : get_data_sn(pkt_buf));
 	if (sn == 0 && errno == EDEVERR) {
