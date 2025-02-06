@@ -213,6 +213,17 @@ int perform_handshake(int sockfd, const char *outfile_path, struct sockaddr *soc
 		return -1;
 	}
 
+	handshake_buf[0] = OP_ACK;
+	if (assign_ack_sn(handshake_buf, *client_id) < 0) {
+		fprintf(stderr, "myclient ~ perform_handshake(): encountered error assigning client ID to handshake buffer.\n");
+		return -1;
+	}
+
+	if (sendto(sockfd, handshake_buf, sizeof(handshake_buf), 0, sockaddr, *sockaddr_size) < 0) {
+		fprintf(stderr, "myclient ~ perform_handshake(): client failed to send final ACK to server.\n");
+		return -1;
+	}
+
 	fprintf(stderr, "Connection confirmed by server.\n");
 
 	return 0;
