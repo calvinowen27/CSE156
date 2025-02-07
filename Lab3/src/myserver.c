@@ -168,6 +168,7 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int dro
 	}
 
 	fprintf(stderr, "myserver ~ run(): something went wrong. Closing server.\n");
+	exit(1);
 	return -1; // TODO: check if exit code is needed
 }
 
@@ -554,7 +555,7 @@ int drop_pkt(char *pkt_buf, int *pkt_count, int droppc) {
 	}
 
 	printf("%d-%02d-%02dT%02d:%02d:%02dZ, %s, %u\n", tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec, opstring, sn);
-	// fflush(stdout);
+	fflush(stdout);
 
 	// printf("returning from drop_pkt())\n");
 

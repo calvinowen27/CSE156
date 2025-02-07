@@ -1,4 +1,4 @@
-# Simple Echo Server: Lab 2
+# Simple Reliable File Transfer: Lab 3
 
 ## Student Info
 Calvin Owen
@@ -10,29 +10,23 @@ Calvin Owen
 
 <ins>myclient.h</ins> - Header file defining prototype functions for myclient.c
 
-<ins>myserver.c</ins> - C file implementing the main functionality of the echo server
+<ins>myserver.c</ins> - C file implementing the main functionality of the file transfer server
 
 <ins>myserver.h</ins> - Header file defining prototype functions for myserver.c
 
-<ins>oooserver.c</ins> - C file implementing functionality for a test server that returns packets out of order. Based on myserver.c
-
-<ins>crashingserver.c</ins> - C file implementing functionality for a test server that crashes before all packets are echoed. Based on myserver.c
-
-<ins>utils.c</ins> - C file implementing utility read/write functions to be used in myclient.c, myserver.c, oooserver.c, and crashingserver.c
+<ins>utils.c</ins> - C file implementing utility functions to be used in myclient.c, myserver.c
 
 <ins>utils.h</ins> - Header file defining prototype functions for utils.h
 
 
 ### test/
-<ins>run_tests.sh</ins> - run all test in the folder
+<ins>test_bad_inputs.sh</ins> - test myclient for bad inputs to see how it responds. expect exit with failure code.
 
-<ins>test_ascii.sh</ins> - test myserver and myclient to make sure that small and large files can be sent, echoed, and reconstructed correctly
+<ins>test_high_drops.sh</ins> - test client response to server with high drop rate. expect it to exit with too many retransmissions.
 
-<ins>test_bad_ip.sh</ins> - test myclient with a bad input ip address
+<ins>test_multiple_clients.sh</ins> - test myserver to see if it can handle packets from multiple clients. expect unique files to be created and replicated correctly.
 
-<ins>test_multiple_clients.sh</ins> - test myserver to see if it can handle packets from multiple clients
+<ins>test_normal.sh</ins> - test myclient and myserver with normal valid inputs, confirm that file transfer happens safely and reliably.
 
-<ins>test_ooo_server.sh</ins> - test myclient with oooserver to see if file can be reconstructed correctly if packets are received out of order from the server
-
-<ins>test_server_crash.sh</ins> - test myclient to make sure nothing bad happens if it loses connection to the server in the middle of receiving packets
+<ins>test_server_crash.sh</ins> - test client reaction to a crashed server. expect it to exit with too many retransmissions or inability to detect server.
 
