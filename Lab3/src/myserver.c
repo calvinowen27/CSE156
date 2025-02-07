@@ -349,7 +349,6 @@ int complete_handshake(int sockfd, char *res_buf, struct sockaddr *sockaddr, soc
 			continue;
 		}
 
-
 		// printf("sending ACK %d\n", (int)res_buf[0]);
 		// send ack with client id back to client
 		if (sendto(sockfd, res_buf, sizeof(res_buf), 0, sockaddr, *sockaddr_size) < 0) {
@@ -368,8 +367,11 @@ int complete_handshake(int sockfd, char *res_buf, struct sockaddr *sockaddr, soc
 					continue;
 				}
 
+				retransmits = 0;
+
 				if ((ack_sn = get_ack_sn(pkt_buf)) == 0 && errno == 1) {
 					fprintf(stderr, "myserver ~ complete_handshake(): encountered an error reading ACK sn from handshake response.\n");
+					
 				}
 			}
 		}
@@ -503,22 +505,31 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, u_
 // determines wether to drop a pkt based on pkt_count
 // prints log message if pkt is dropped
 // returns 1 if true, 0 if false
-int dropped = 0;
 int drop_pkt(char *pkt_buf, int *pkt_count, int droppc) {
-	if (((*pkt_count) % 100) % (100 / droppc) != 0 || droppc == 0) {
+	// if (((float)droppc / (float)((*pkt_count) % 100)) - (int)(((float)droppc / (float)((*pkt_count) % 100))) > 0.01 || droppc == 0) {
+	// 	(*pkt_count) ++;
+
+	// 	printf("%f - %d = %f\n", ((float)droppc / (float)100) * (float)(*pkt_count), (int)(((float)droppc / (float)100) * (*pkt_count)), ((float)droppc / (float)100) * (float)(*pkt_count) - (int)(((float)droppc / (float)100) * (*pkt_count)));
+
+	// 	return 0;
+	// }
+
+	int every = 100 / droppc;
+
+	if (((*pkt_count) % 100) % every != 0 || fabs(((float)((*pkt_count) % 100) / ((float)100 / (float)droppc)) - every) <= ((float)100 / (float)droppc) - every || droppc == 0) {
 		(*pkt_count) ++;
 
 		return 0;
 	}
 
+	// if (((*pkt_count) % 100) % (100 / droppc) != 0 || droppc == 0) {
+		
+	// }
+
 	// printf("drop with pkt count %d\n", *pkt_count);
 	// printf("%d - %f = %f\n", (int)r, r, fabs((float)((int)(r+0.9)) - r));
 
 	(*pkt_count) ++;
-
-	dropped ++;
-
-	// printf("DROP RATE: %f\n", (float)dropped / (float)(*pkt_count));
 
 	time_t t = time(NULL);
 	struct tm *tm = gmtime(&t);

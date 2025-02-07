@@ -120,6 +120,11 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 		return -1;
 	}
 
+	bool handshake_confirmed = false;
+	int handshake_retransmits = 0;
+
+	start_pkt_sn = (client_id + 2) % (2 * winsz);
+
 	// once we're here, we should have client id value in client_id, meaning handshake is complete
 
 	bool need_pkt_resend, reached_eof = false;
@@ -154,6 +159,41 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 
 			// wait for server response, to get ack sn
 			recv_res = recv_server_response(sockfd, sockaddr, sockaddr_size, &ack_pkt_sn, start_pkt_sn, winsz);
+
+			if (!handshake_confirmed) {
+				if (ack_pkt_sn == client_id) {
+					char handshake_buf[5];
+					handshake_buf[0] = OP_WR; // only for logging
+					if (assign_ack_sn(handshake_buf, client_id) < 0) {
+						fprintf(stderr, "myclient ~ perform_handshake(): encountered error assigning client ID to handshake buffer.\n");
+						return -1;
+					}
+
+					if (log_pkt(handshake_buf, client_id, winsz) < 0) {
+						fprintf(stderr, "myclient ~ perform_handshake(): encountered error logging pkt info.\n");
+						return -1;
+					}
+
+					handshake_buf[0] = OP_ACK;
+
+					if (sendto(sockfd, handshake_buf, sizeof(handshake_buf), 0, sockaddr, *sockaddr_size) < 0) {
+						fprintf(stderr, "myclient ~ perform_handshake(): client failed to send final ACK to server.\n");
+						return -1;
+					}
+
+					fprintf(stderr, "Connection reconfirmed by server.\n");
+
+					handshake_retransmits ++;
+					if (handshake_retransmits > 3) {
+						fprintf(stderr, "Reached max re-transmission limit\n");
+						exit(4);
+					}
+
+					continue;
+				} else {
+					handshake_confirmed = true;
+				}
+			}
 		} while (recv_res == 1);
 
 		if (recv_res < 0) {
@@ -422,7 +462,7 @@ int recv_server_response(int sockfd, struct sockaddr *sockaddr, socklen_t *socka
 	} else { // after timeout
 		// TODO: retransmit pkt window since we didn't hear back from the server, keep track of retransmits per pkt
 		//		also make sure to update the error message V V V
-		fprintf(stderr, "myclient ~ recv_server_response(): No server response. Retrying.\n");
+		fprintf(stderr, "Packet Loss Detected\n");
 		return 1;
 	}
 
@@ -448,7 +488,7 @@ int log_pkt(char *pkt_buf, u_int32_t start_sn, u_int32_t winsz) {
 
 	char *opstring = opcode == OP_ACK ? "ACK" : (opcode == OP_WR ? "CTRL" : "DATA");
 
-	u_int32_t sn = opcode == OP_WR ? 0 : (opcode == OP_ACK ? get_ack_sn(pkt_buf) : get_data_sn(pkt_buf));
+	u_int32_t sn = opcode == OP_WR ? get_wr_sn(pkt_buf) : (opcode == OP_ACK ? get_ack_sn(pkt_buf) : get_data_sn(pkt_buf));
 	if (sn == 0 && errno == 1) {
 		fprintf(stderr, "myclient ~ log_pkt(): encountered an error getting pkt sn from pkt.\n");
 		return -1;

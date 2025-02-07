@@ -62,6 +62,9 @@ int get_pkt_opcode(char *pkt_buf);
 // returns window size of pkt_buf, 0 on error
 u_int32_t get_write_req_winsz(char *pkt_buf);
 
+// returns sn of pkt_buf, 0 on error
+u_int32_t get_wr_sn(char *pkt_buf);
+
 // returns client id of pkt_buf, 0 on error
 u_int32_t get_data_client_id(char *pkt_buf);
 

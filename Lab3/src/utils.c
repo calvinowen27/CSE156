@@ -365,6 +365,30 @@ u_int32_t get_data_client_id(char *pkt_buf) {
 	}
 }
 
+// returns sn of pkt_buf, 0 on error
+u_int32_t get_wr_sn(char *pkt_buf) {
+	if (pkt_buf == NULL) {
+		fprintf(stderr, "utils ~ get_wr_sn(): cannot pass NULL ptr to pkt_buf.\n");
+		return 0;
+	}
+
+	// pkt_sn occurs right after opcode for ack, not at all for error
+	// check opcode for ack, otherwise return 0
+	if ((int)pkt_buf[0] == OP_WR) {
+		u_int8_t bytes[4];
+		bytes[0] = pkt_buf[1];
+		bytes[1] = pkt_buf[2];
+		bytes[2] = pkt_buf[3];
+		bytes[3] = pkt_buf[4];
+		
+		return reunite_bytes(bytes);
+	} else {
+		fprintf(stderr, "utils ~ get_wr_sn(): pkt_buf does not contain valid opcode to get a sequence number.\n");
+		errno = 1;
+		return 0;
+	}
+}
+
 // returns pkt sn of pkt_buf if data pkt, 0 on error and sets errno to 1
 u_int32_t get_data_sn(char *pkt_buf) {
 	if (pkt_buf == NULL) {

@@ -4,20 +4,20 @@ echo "
 !!! RUNNING TEST_MULTIPLE_CLIENTS !!!
 "
 
-./bin/myserver 9090 &
+./bin/myserver 9090 0 &
 server_pid=$!
 
-./bin/myclient 127.0.0.1 9090 4096 test_files/large_ascii.txt out/large_ascii_out.txt &
+./bin/myclient 127.0.0.1 9090 8192 25 test_files/large_ascii.txt out/large_ascii_out.txt &
 client1_pid=$!
 
-./bin/myclient 127.0.0.1 9090 4096 test_files/small_ascii.txt out/small_ascii_out.txt &
+./bin/myclient 127.0.0.1 9090 8192 25 test_files/large_binary.dat out/large_binary_out.dat &
 client2_pid=$!
 
 wait $client1_pid
 wait $client2_pid
 
 diff test_files/large_ascii.txt out/large_ascii_out.txt > diff1
-diff test_files/small_ascii.txt out/small_ascii_out.txt > diff2
+diff test_files/large_binary.dat out/large_binary_out.dat > diff2
 
 if [ ! -d out ]; then
 	echo "~~~~~~~~~~~~~~~~~~~~~~~
