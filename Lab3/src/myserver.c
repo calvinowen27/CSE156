@@ -98,17 +98,17 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int dro
 		timeout.tv_sec = LOSS_TIMEOUT_SECS;
 		FD_SET(sockfd, &fds);
 
+		printf("waiting...\n");
+
 		if (select(sockfd + 1, &fds, NULL, NULL, &timeout) > 0) { // check there is data to be read from socket
 			// data available at socket
 			// read into buffer
 			if ((bytes_recvd = recvfrom(sockfd, pkt_buf, BUFFER_SIZE, 0, sockaddr, sockaddr_size)) >= 0) {
 
-				if (drop_pkt(pkt_buf, pkts_recvd, droppc)) {
-					pkts_recvd ++;
+				if (drop_pkt(pkt_buf, &pkts_recvd, droppc)) {
+					printf("continue waiting for data\n");
 					continue;
 				}
-
-				pkts_recvd ++;
 
 				int opcode = get_pkt_opcode(pkt_buf);
 				
@@ -184,7 +184,7 @@ int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int 
 
 		pkt->written = false;
 		pkt->ackd = true;
-		// printf("setting %u as ackd\n", first_unwritten_sn);
+		printf("setting %u as ackd\n", first_unwritten_sn);
 
 		client->pkt_info[(first_unwritten_sn + client->winsz) % client->pkt_count].ackd = false;
 		
@@ -193,7 +193,7 @@ int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int 
 		pkts_counted ++;
 	}
 
-	// printf("first unwritten found as %u\n", first_unwritten_sn);
+	printf("first unwritten found as %u\n", first_unwritten_sn);
 
 	client->expected_start_sn = first_unwritten_sn;
 
@@ -210,19 +210,17 @@ int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int 
 		return -1;
 	}
 
-	if (drop_pkt(ack_buf, *pkts_sent, droppc)) {
-		(*pkts_sent) ++;
-
+	if (drop_pkt(ack_buf, pkts_sent, droppc)) {
 		return 0;
 	} else if (sendto(sockfd, ack_buf, 5, 0, client->sockaddr, *client->sockaddr_size) < 0) {
 		fprintf(stderr, "myserver ~ send_client_ack(): encountered an error sending ack to client %u with sn %u.\n", client->id, first_unwritten_sn);
 		return -1;
 	}
 
+	printf("ack %u sent\n", ack_sn);
+
 	client->ack_sent = true;
 
-	(*pkts_sent) ++;
-	
 	return 0;
 }
 
@@ -258,7 +256,7 @@ int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr
 		return -1;
 	}
 
-	if (complete_handshake(sockfd, res_buf, sockaddr, sockaddr_size, pkt_buf, clients, max_client_count, client_id, pkts_sent, pkts_recvd, droppc) < 0) {
+	if (complete_handshake(sockfd, res_buf, sockaddr, sockaddr_size, pkt_buf, client_id, pkts_sent, pkts_recvd, droppc) < 0) {
 		fprintf(stderr, "myserver ~ process_write_req(): encountered error completing handshake with client %u.\n", client_id);
 		return -1;
 	}
@@ -272,7 +270,7 @@ int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr
 	return 0;
 }
 
-int complete_handshake(int sockfd, char *res_buf, struct sockaddr *sockaddr, socklen_t *sockaddr_size, char *pkt_buf, struct client_info **clients, u_int32_t *max_client_count, u_int32_t client_id, int *pkts_sent, int *pkts_recvd, int droppc) {
+int complete_handshake(int sockfd, char *res_buf, struct sockaddr *sockaddr, socklen_t *sockaddr_size, char *pkt_buf, u_int32_t client_id, int *pkts_sent, int *pkts_recvd, int droppc) {
 	// configure fds and timeout for select() call
 	fd_set fds;
 	FD_SET(sockfd, &fds);
@@ -282,16 +280,16 @@ int complete_handshake(int sockfd, char *res_buf, struct sockaddr *sockaddr, soc
 	int bytes_recvd;
 
 	u_int32_t ack_sn = 0;
-	int retransmits = 0;
+	int retransmits = -1;
 
-	while (ack_sn != client_id && retransmits <= 3) {
+	while (ack_sn != client_id && retransmits < 4) {
 		// reset timeout
 		timeout.tv_sec = LOSS_TIMEOUT_SECS;
 		FD_SET(sockfd, &fds);
 
-		if (drop_pkt(res_buf, *pkts_sent, droppc)) {
-			(*pkts_sent) ++;
-			retransmits ++;
+		retransmits ++;
+
+		if (drop_pkt(res_buf, pkts_sent, droppc)) {
 			continue;
 		}
 
@@ -308,8 +306,7 @@ int complete_handshake(int sockfd, char *res_buf, struct sockaddr *sockaddr, soc
 			// read into buffer
 			if ((bytes_recvd = recvfrom(sockfd, pkt_buf, BUFFER_SIZE, 0, sockaddr, sockaddr_size)) >= 0) {
 
-				if (drop_pkt(pkt_buf, *pkts_recvd, droppc)) {
-					(*pkts_recvd) ++;
+				if (drop_pkt(pkt_buf, pkts_recvd, droppc)) {
 					continue;
 				}
 
@@ -317,17 +314,12 @@ int complete_handshake(int sockfd, char *res_buf, struct sockaddr *sockaddr, soc
 					fprintf(stderr, "myserver ~ complete_handshake(): encountered an error reading ACK sn from handshake response.\n");
 				}
 			}
-		} else {
-			retransmits ++;
 		}
 	}
 
 	if (retransmits > 3) {
-		fprintf(stderr, "myserver ~ complete_handshake(): exceeded 3 retransmissions for handshake. terminating client.\n");
-		if (terminate_client(clients, max_client_count, client_id) < 0) {
-			fprintf(stderr, "my server ~ complete_handshake(): encountered error terminating client %u.\n", client_id);
-			return -1;
-		}
+		fprintf(stderr, "myserver ~ complete_handshake(): exceeded 3 retransmissions for handshake. Rejecting client.\n");
+		return -1;
 	}
 
 	return 0;
@@ -429,7 +421,7 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, u_
 
 		client->expected_sn = (pkt_sn + 1) % client->pkt_count;
 	} else {
-		// printf("unexpected pkt recvd: %u, expected %u\n", pkt_sn, client->expected_sn);
+		printf("unexpected pkt recvd: %u, expected %u\n", pkt_sn, client->expected_sn);
 		if (send_client_ack(client, sockfd, pkts_sent, droppc) < 0) {
 			fprintf(stderr, "myserver ~ process_data_pkt(): encountered error sending ack to client.\n");
 			return -1;
@@ -453,10 +445,16 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, u_
 // determines wether to drop a pkt based on pkt_count
 // prints log message if pkt is dropped
 // returns 1 if true, 0 if false
-int drop_pkt(char *pkt_buf, int pkt_count, int droppc) {
-	if ((pkt_count % 100) + 1 > droppc) {
+int drop_pkt(char *pkt_buf, int *pkt_count, int droppc) {
+	if ((*pkt_count) % (100 / droppc) != 0) {
+		(*pkt_count) ++;
+
 		return 0;
 	}
+
+	printf("drop with pkt count %d\n", *pkt_count);
+
+	(*pkt_count) ++;
 
 	time_t t = time(NULL);
 	struct tm *tm = gmtime(&t);
@@ -482,6 +480,8 @@ int drop_pkt(char *pkt_buf, int pkt_count, int droppc) {
 
 	printf("%d-%02d-%02dT%02d:%02d:%02dZ, %s, %u\n", tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec, opstring, sn);
 	fflush(stdout);
+
+	printf("returning from drop_pkt())\n");
 
 	return 1;
 }

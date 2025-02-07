@@ -14,7 +14,7 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int dro
 // return 0 on success, -1 on error
 int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, char *pkt_buf, struct client_info **clients, u_int32_t *max_client_count, u_int32_t client_id, int *pkts_sent, int *pkts_recvd, int droppc);
 
-int complete_handshake(int sockfd, char *res_buf, struct sockaddr *sockaddr, socklen_t *sockaddr_size, char *pkt_buf, struct client_info **clients, u_int32_t *max_client_count, u_int32_t client_id, int *pkts_sent, int *pkts_recvd, int droppc);
+int complete_handshake(int sockfd, char *res_buf, struct sockaddr *sockaddr, socklen_t *sockaddr_size, char *pkt_buf, u_int32_t client_id, int *pkts_sent, int *pkts_recvd, int droppc);
 
 // perform writing actions from a data pkt sent by known client
 // if payload size == 0, terminate client connection
@@ -29,6 +29,6 @@ int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int 
 // determines wether to drop a pkt based on pkt_count
 // prints log message if pkt is dropped
 // returns 1 if true, 0 if false
-int drop_pkt(char *pkt_buf, int pkt_count, int droppc);
+int drop_pkt(char *pkt_buf, int *pkt_count, int droppc);
 
 #endif
