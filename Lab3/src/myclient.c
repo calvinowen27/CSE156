@@ -43,7 +43,7 @@ int main(int argc, char **argv) {
 	int mss = atoi(argv[3]);																// mss
 	// check for valid mss size
 	if (mss < MIN_MSS_SIZE) {
-		printf("Invalid mss provided. Please provide a positive integer greater than %d.\n", MIN_MSS_SIZE);
+		fprintf(stderr, "Required minimum MSS is %d\n", MIN_MSS_SIZE);
 		exit(1);
 	}
 
@@ -86,6 +86,12 @@ int main(int argc, char **argv) {
 	int sockfd = init_socket(&serveraddr, server_ip, server_port, AF_INET, SOCK_DGRAM, IPPROTO_UDP, false);
 	if (sockfd < 0) {
 		fprintf(stderr, "myclient ~ main(): failed to initialize socket.\n");
+		exit(1);
+	}
+
+	struct timeval server_timeout = { TIMEOUT_SECS, 0 };
+	if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &server_timeout, sizeof(server_timeout)) < 0) {
+		fprintf(stderr, "myclient ~ main(): encountered error trying to set socket timeout: %s\n", strerror(errno));
 		exit(1);
 	}
 
@@ -386,9 +392,6 @@ int recv_server_response(int sockfd, struct sockaddr *sockaddr, socklen_t *socka
 	int bytes_recvd;
 
 	if (select(sockfd + 1, &fds, NULL, NULL, &timeout) > 0) { // check there is data to be read from socket
-		timeout.tv_sec = LOSS_TIMEOUT_SECS;
-		FD_SET(sockfd, &fds);
-
 		if ((bytes_recvd = recvfrom(sockfd, pkt_buf, sizeof(pkt_buf), 0, sockaddr, sockaddr_size)) >= 0) {			
 			// recvfrom success
 			int opcode = get_pkt_opcode(pkt_buf);
@@ -413,9 +416,8 @@ int recv_server_response(int sockfd, struct sockaddr *sockaddr, socklen_t *socka
 				return -1;
 			}
 		} else { // recvfrom failed
-			fprintf(stderr, "myclient ~ recv_server_response(): an error occured while receiving data from server.\n");
-			fprintf(stderr, "%s\n", strerror(errno));
-			return -1;
+			fprintf(stderr, "Cannot detect server.\n");
+			exit(5);
 		}
 	} else { // after timeout
 		// TODO: retransmit pkt window since we didn't hear back from the server, keep track of retransmits per pkt
