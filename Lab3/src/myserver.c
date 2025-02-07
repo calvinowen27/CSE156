@@ -503,10 +503,7 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, u_
 // returns 1 if true, 0 if false
 int dropped = 0;
 int drop_pkt(char *pkt_buf, int *pkt_count, int droppc) {
-	float d = (float)droppc / (float)100;
-	float r = (float)(*pkt_count) * d;
-	if (fabs((float)((int)(r+0.9)) - r) > (float)0.011) {
-		// printf("skipping %d because %d - %f = %f\n", *pkt_count, (int)r, r, fabs((float)((int)(r+0.9)) - r));
+	if ((*pkt_count) % (100 / droppc) != 0) {
 		(*pkt_count) ++;
 
 		return 0;
