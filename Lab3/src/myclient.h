@@ -18,10 +18,10 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 
 // wait for server response, ack_pkt_sn is output
 // return 0 on success, -1 on error
-int recv_server_response(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, u_int32_t *ack_pkt_sn);
+int recv_server_response(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, u_int32_t *ack_pkt_sn, u_int32_t start_sn, u_int32_t winsz);
 
 // prints log message of pkt
 // returns 0 on success, -1 on error
-int log_pkt(char *pkt_buf);
+int log_pkt(char *pkt_buf, u_int32_t start_sn, u_int32_t winsz);
 
 #endif

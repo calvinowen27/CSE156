@@ -349,6 +349,8 @@ int complete_handshake(int sockfd, char *res_buf, struct sockaddr *sockaddr, soc
 			continue;
 		}
 
+
+		// printf("sending ACK %d\n", (int)res_buf[0]);
 		// send ack with client id back to client
 		if (sendto(sockfd, res_buf, sizeof(res_buf), 0, sockaddr, *sockaddr_size) < 0) {
 			fprintf(stderr, "myserver ~ complete_handshake(): failed to send connection acceptance pkt to client.\n");

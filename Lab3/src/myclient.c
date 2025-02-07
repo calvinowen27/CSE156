@@ -147,7 +147,7 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 			reached_eof = pkts_sent == 0; // update reached_eof
 
 			// wait for server response, to get ack sn
-			recv_res = recv_server_response(sockfd, sockaddr, sockaddr_size, &ack_pkt_sn);
+			recv_res = recv_server_response(sockfd, sockaddr, sockaddr_size, &ack_pkt_sn, start_pkt_sn, winsz);
 		} while (recv_res == 1);
 
 		if (recv_res < 0) {
@@ -157,7 +157,7 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 
 		if (reached_eof) {
 			while (recv_res == 1) {
-				recv_res = recv_server_response(sockfd, sockaddr, sockaddr_size, &ack_pkt_sn);
+				recv_res = recv_server_response(sockfd, sockaddr, sockaddr_size, &ack_pkt_sn, start_pkt_sn, winsz);
 			}
 
 			if (recv_res < 0) {
@@ -175,7 +175,7 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 					return -1;
 				}
 
-				if (log_pkt(ack_buf) < 0) {
+				if (log_pkt(ack_buf, client_id, winsz) < 0) {
 					fprintf(stderr, "myclient ~ send_file(): encountered error logging pkt info.\n");
 					return -1;
 				}
@@ -233,8 +233,8 @@ int perform_handshake(int sockfd, const char *outfile_path, struct sockaddr *soc
 		retransmits ++;
 
 		if (retransmits > 3) {
-			printf("Exceeded retransmission limit (3) for a single packet. Exiting.\n");
-			exit(1); // TODO: check exit code
+			fprintf(stderr, "Reached max re-transmission limit\n");
+			exit(4);
 		}
 
 		// send WR to server
@@ -243,30 +243,32 @@ int perform_handshake(int sockfd, const char *outfile_path, struct sockaddr *soc
 			return -1;
 		}
 
-		if (log_pkt(handshake_buf) < 0) {
+		if (log_pkt(handshake_buf, 0, winsz) < 0) {
 			fprintf(stderr, "myclient ~ perform_handshake(): encountered error logging pkt info.\n");
 			return -1;
 		}
-	} while ((recv_res = recv_server_response(sockfd, sockaddr, sockaddr_size, client_id)) == 1);
+	} while ((recv_res = recv_server_response(sockfd, sockaddr, sockaddr_size, client_id, 0, winsz)) == 1);
 
 	if (recv_res < 0) {
 		fprintf(stderr, "myclient ~ perform_handshake(): failed to recv server handshake response.\n");
 		return -1;
 	}
 
-	handshake_buf[0] = OP_ACK;
+	handshake_buf[0] = OP_WR; // only for logging
 	if (assign_ack_sn(handshake_buf, *client_id) < 0) {
 		fprintf(stderr, "myclient ~ perform_handshake(): encountered error assigning client ID to handshake buffer.\n");
 		return -1;
 	}
 
-	if (sendto(sockfd, handshake_buf, sizeof(handshake_buf), 0, sockaddr, *sockaddr_size) < 0) {
-		fprintf(stderr, "myclient ~ perform_handshake(): client failed to send final ACK to server.\n");
+	if (log_pkt(handshake_buf, *client_id, winsz) < 0) {
+		fprintf(stderr, "myclient ~ perform_handshake(): encountered error logging pkt info.\n");
 		return -1;
 	}
 
-	if (log_pkt(handshake_buf) < 0) {
-		fprintf(stderr, "myclient ~ perform_handshake(): encountered error logging pkt info.\n");
+	handshake_buf[0] = OP_ACK;
+
+	if (sendto(sockfd, handshake_buf, sizeof(handshake_buf), 0, sockaddr, *sockaddr_size) < 0) {
+		fprintf(stderr, "myclient ~ perform_handshake(): client failed to send final ACK to server.\n");
 		return -1;
 	}
 
@@ -292,8 +294,8 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 		} else if (pkt->active) {
 			pkt->retransmits ++;
 			if (pkt->retransmits > 3) {
-				printf("Exceeded retransmission limit (3) for a single packet. Exiting.\n");
-				exit(1); // TODO: check exit code
+				fprintf(stderr, "Reached max re-transmission limit\n");
+				exit(4);
 			}
 		}
 	}
@@ -350,7 +352,7 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 
 		(*last_sent_sn) = pkt_sn;
 
-		if (log_pkt(pkt_buf) < 0) {
+		if (log_pkt(pkt_buf, start_pkt_sn, winsz) < 0) {
 			fprintf(stderr, "myclient ~ send_window_pkts(): encountered error logging pkt info.\n");
 			return -1;
 		}
@@ -371,7 +373,7 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 
 // wait for server response, ack_pkt_sn is output
 // return 0 on success, 1 on resend, -1 on error
-int recv_server_response(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, u_int32_t *ack_pkt_sn) {
+int recv_server_response(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, u_int32_t *ack_pkt_sn, u_int32_t start_sn, u_int32_t winsz) {
 	char pkt_buf[MAX_SRVR_RES_SIZE];
 	memset(pkt_buf, 0, sizeof(pkt_buf));
 
@@ -379,17 +381,15 @@ int recv_server_response(int sockfd, struct sockaddr *sockaddr, socklen_t *socka
 	fd_set fds;
 	FD_SET(sockfd, &fds);
 
-	struct timeval timeout = { TIMEOUT_SECS, 0 };
+	struct timeval timeout = { LOSS_TIMEOUT_SECS, 0 };
 
 	int bytes_recvd;
 
 	if (select(sockfd + 1, &fds, NULL, NULL, &timeout) > 0) { // check there is data to be read from socket
-		if ((bytes_recvd = recvfrom(sockfd, pkt_buf, sizeof(pkt_buf), 0, sockaddr, sockaddr_size)) >= 0) {
-			if (log_pkt(pkt_buf) < 0) {
-				fprintf(stderr, "myclient ~ send_window_pkts(): encountered error logging pkt info.\n");
-				return -1;
-			}
-			
+		timeout.tv_sec = LOSS_TIMEOUT_SECS;
+		FD_SET(sockfd, &fds);
+
+		if ((bytes_recvd = recvfrom(sockfd, pkt_buf, sizeof(pkt_buf), 0, sockaddr, sockaddr_size)) >= 0) {			
 			// recvfrom success
 			int opcode = get_pkt_opcode(pkt_buf);
 			switch (opcode) {
@@ -407,6 +407,11 @@ int recv_server_response(int sockfd, struct sockaddr *sockaddr, socklen_t *socka
 					return -1;
 					break;
 			};
+
+			if (log_pkt(pkt_buf, start_sn, winsz) < 0) {
+				fprintf(stderr, "myclient ~ send_window_pkts(): encountered error logging pkt info.\n");
+				return -1;
+			}
 		} else { // recvfrom failed
 			fprintf(stderr, "myclient ~ recv_server_response(): an error occured while receiving data from server.\n");
 			fprintf(stderr, "%s\n", strerror(errno));
@@ -424,7 +429,7 @@ int recv_server_response(int sockfd, struct sockaddr *sockaddr, socklen_t *socka
 
 // prints log message of pkt
 // returns 0 on success, -1 on error
-int log_pkt(char *pkt_buf) {
+int log_pkt(char *pkt_buf, u_int32_t start_sn, u_int32_t winsz) {
 	time_t t = time(NULL);
 	struct tm *tm = gmtime(&t);
 
@@ -447,7 +452,7 @@ int log_pkt(char *pkt_buf) {
 		return -1;
 	}
 
-	printf("%d-%02d-%02dT%02d:%02d:%02dZ, %s, %u\n", tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec, opstring, sn);
+	printf("%d-%02d-%02dT%02d:%02d:%02dZ, %s, %u, %u, %u, %u\n", tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec, opstring, sn, start_sn, (sn + 1) % (2 * winsz), (start_sn + winsz) % (2 * winsz));
 	// fflush(stdout);
 
 	return 0;

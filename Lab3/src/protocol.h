@@ -2,7 +2,8 @@
 	defines constants used for the custom protocol implemented in Lab3: Simple Reliable File Transfer
 */
 
-#define TIMEOUT_SECS 5												// second until client retransmits packet window to server
+#define TIMEOUT_SECS 30												// second until client retransmits packet window to server
+
 #define LOSS_TIMEOUT_SECS 5											// seconds until server accepts packet loss and sends ack
 #define SN_BYTES 4													// num bytes for sequence number
 #define CID_BYTES 4													// num bytes for client ID
