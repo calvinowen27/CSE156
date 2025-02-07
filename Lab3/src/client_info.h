@@ -26,6 +26,7 @@ struct client_info {
 	
 	bool ack_sent;
 	bool is_active;
+	bool terminating;
 };
 
 // initialize client array and set default values for client_info entries

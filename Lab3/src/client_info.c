@@ -140,6 +140,7 @@ int client_info_init(struct client_info *client, u_int32_t client_id, char *outf
 	client->winsz = winsz;
 	client->pkt_count = winsz * 2;
 	client->ack_sent = false;
+	client->terminating = false;
 
 	// allocate pkt_info buffer
 	client->pkt_info = calloc(sizeof(struct pkt_info), client->pkt_count);
@@ -180,7 +181,7 @@ int terminate_client(struct client_info **clients, u_int32_t *max_client_count, 
 	// find client in array and free all allocated heap memory, close outfile
 	for (u_int32_t i = 0; i < *max_client_count; i++) {
 		struct client_info *client = &(*clients)[i];
-		if (client->id == client_id) {
+		if (client->id == client_id && client->is_active) {
 			client->is_active = false;
 			// free(client->ooo_file_idxs);
 			// free(client->ooo_pkt_sns);

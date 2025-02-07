@@ -10,6 +10,7 @@
 #include <arpa/inet.h>
 #include <time.h>
 #include <stdint.h>
+#include <math.h>
 
 #include "myserver.h"
 #include "utils.h"
@@ -98,7 +99,7 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int dro
 		timeout.tv_sec = LOSS_TIMEOUT_SECS;
 		FD_SET(sockfd, &fds);
 
-		printf("waiting...\n");
+		// printf("waiting...\n");
 
 		if (select(sockfd + 1, &fds, NULL, NULL, &timeout) > 0) { // check there is data to be read from socket
 			// data available at socket
@@ -106,7 +107,7 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int dro
 			if ((bytes_recvd = recvfrom(sockfd, pkt_buf, BUFFER_SIZE, 0, sockaddr, sockaddr_size)) >= 0) {
 
 				if (drop_pkt(pkt_buf, &pkts_recvd, droppc)) {
-					printf("continue waiting for data\n");
+					// printf("continue waiting for data\n");
 					continue;
 				}
 
@@ -124,6 +125,12 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int dro
 					case OP_DATA:
 						if (process_data_pkt(sockfd, pkt_buf, &clients, &max_client_count, &pkts_sent, droppc) < 0) {
 							fprintf(stderr, "myserver ~ run(): encountered error processing data pkt.\n");
+							return -1;
+						}
+						break;
+					case OP_ACK:
+						if (process_ack_pkt(pkt_buf, &clients, &max_client_count) < 0) {
+							fprintf(stderr, "myserver ~ run(): encountered error processing ack pkt.\n");
 							return -1;
 						}
 						break;
@@ -184,7 +191,7 @@ int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int 
 
 		pkt->written = false;
 		pkt->ackd = true;
-		printf("setting %u as ackd\n", first_unwritten_sn);
+		// printf("setting %u as ackd\n", first_unwritten_sn);
 
 		client->pkt_info[(first_unwritten_sn + client->winsz) % client->pkt_count].ackd = false;
 		
@@ -193,7 +200,7 @@ int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int 
 		pkts_counted ++;
 	}
 
-	printf("first unwritten found as %u\n", first_unwritten_sn);
+	// printf("first unwritten found as %u\n", first_unwritten_sn);
 
 	client->expected_start_sn = first_unwritten_sn;
 
@@ -217,9 +224,58 @@ int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int 
 		return -1;
 	}
 
-	printf("ack %u sent\n", ack_sn);
+	// printf("ack %u sent\n", ack_sn);
 
 	client->ack_sent = true;
+
+	return 0;
+}
+
+int process_ack_pkt(char *pkt_buf, struct client_info **clients, u_int32_t *max_client_count) {
+	if (clients == NULL || *clients == NULL) {
+		fprintf(stderr, "myserver ~ process_data_pkt(): invalid ptr passed to clients parameter.\n");
+		return -1;
+	}
+
+	if (max_client_count == NULL) {
+		fprintf(stderr, "myserver ~ process_data_pkt(): null ptr passed to max_client_count.\n");
+		return -1;
+	}
+
+	if (pkt_buf == NULL) {
+		fprintf(stderr, "myserver ~ process_data_pkt(): invalid ptr passed to pkt_buf parameter.\n");
+		return -1;
+	}
+
+	// get client id from pkt and check if we are serving that client
+	u_int32_t client_id = get_ack_sn(pkt_buf);
+	if (client_id == 0) {
+		fprintf(stderr, "myserver ~ process_data_pkt(): encountered an error getting client_id from pkt.\n");
+		return -1;
+	}
+
+	struct client_info *client = NULL;
+	for (u_int32_t i = 0; i < *max_client_count; i++) {
+		if ((*clients)[i].id == client_id) {
+			client = &(*clients)[i];
+			break;
+		}
+	}
+
+	// don't process data, but don't exit server
+	if (client == NULL) {
+		fprintf(stderr, "myserver ~ process_data_pkt(): failed to find client %u. Terminating.\n", client_id);
+		return 0;
+	}
+
+	if (client->terminating) {
+		if (terminate_client(clients, max_client_count, client_id) < 0) {
+			fprintf(stderr, "myserver ~ process_data_pkt(): encountered an error terminating connection with client %u.\n", client_id);
+			return -1;
+		}
+
+		fprintf(stderr, "Client %u terminated.\n", client->id);
+	}
 
 	return 0;
 }
@@ -378,20 +434,21 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, u_
 		return -1;
 	}
 
+	struct pkt_info *pkt = &client->pkt_info[pkt_sn];
+
 	// get payload size, terminate client connection if == 0
 	u_int32_t pyld_sz = get_data_pyld_sz(pkt_buf);
 	if (pyld_sz == 0xffffffff) {
 		fprintf(stderr, "myserver ~ process_data_pkt(): encountered an error getting payload size from data pkt.\n");
 		return -1;
-	} else if (pyld_sz == 0) {
+	} else if (pyld_sz == 0 && pkt_sn == client->expected_sn) {
+		client->ack_sent = false;
+		client->terminating = true;
+		pkt->written = true;
+
 		fprintf(stderr, "myserver ~ Payload size of 0 encountered. Terminating connection with client %u.\n", client_id);
 		if (send_client_ack(client, sockfd, pkts_sent, droppc) < 0) {
 			fprintf(stderr, "myserver ~ process_data_pkt(): encountered error sending final ack to client.\n");
-			return -1;
-		}
-
-		if (terminate_client(clients, max_client_count, client_id) < 0) {
-			fprintf(stderr, "myserver ~ process_data_pkt(): encountered an error terminating connection with client %u.\n", client_id);
 			return -1;
 		}
 
@@ -399,7 +456,6 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, u_
 	}
 
 	// if we've made it to here, everything is valid and client is writing data to file
-	struct pkt_info *pkt = &client->pkt_info[pkt_sn];
 
 	// write based on sn, check for ooo
 	if (pkt_sn == client->expected_sn) { // normal, write bytes to outfile
@@ -421,7 +477,7 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, u_
 
 		client->expected_sn = (pkt_sn + 1) % client->pkt_count;
 	} else {
-		printf("unexpected pkt recvd: %u, expected %u\n", pkt_sn, client->expected_sn);
+		// printf("unexpected pkt recvd: %u, expected %u\n", pkt_sn, client->expected_sn);
 		if (send_client_ack(client, sockfd, pkts_sent, droppc) < 0) {
 			fprintf(stderr, "myserver ~ process_data_pkt(): encountered error sending ack to client.\n");
 			return -1;
@@ -445,16 +501,25 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, u_
 // determines wether to drop a pkt based on pkt_count
 // prints log message if pkt is dropped
 // returns 1 if true, 0 if false
+int dropped = 0;
 int drop_pkt(char *pkt_buf, int *pkt_count, int droppc) {
-	if ((*pkt_count) % (100 / droppc) != 0) {
+	float d = (float)droppc / (float)100;
+	float r = (float)(*pkt_count) * d;
+	if (fabs((float)((int)(r+0.9)) - r) > (float)0.011) {
+		// printf("skipping %d because %d - %f = %f\n", *pkt_count, (int)r, r, fabs((float)((int)(r+0.9)) - r));
 		(*pkt_count) ++;
 
 		return 0;
 	}
 
-	printf("drop with pkt count %d\n", *pkt_count);
+	// printf("drop with pkt count %d\n", *pkt_count);
+	// printf("%d - %f = %f\n", (int)r, r, fabs((float)((int)(r+0.9)) - r));
 
 	(*pkt_count) ++;
+
+	dropped ++;
+
+	printf("DROP RATE: %f\n", (float)dropped / (float)(*pkt_count));
 
 	time_t t = time(NULL);
 	struct tm *tm = gmtime(&t);
@@ -479,9 +544,9 @@ int drop_pkt(char *pkt_buf, int *pkt_count, int droppc) {
 	}
 
 	printf("%d-%02d-%02dT%02d:%02d:%02dZ, %s, %u\n", tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec, opstring, sn);
-	fflush(stdout);
+	// fflush(stdout);
 
-	printf("returning from drop_pkt())\n");
+	// printf("returning from drop_pkt())\n");
 
 	return 1;
 }

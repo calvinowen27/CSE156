@@ -10,6 +10,8 @@ struct client_info;
 // this function will run forever once called, or until there is an error (returns -1)
 int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int droppc);
 
+int process_ack_pkt(char *pkt_buf, struct client_info **clients, u_int32_t *max_client_count);
+
 // initialize client connection with outfile and next client_id, send response to client with client_id
 // return 0 on success, -1 on error
 int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, char *pkt_buf, struct client_info **clients, u_int32_t *max_client_count, u_int32_t client_id, int *pkts_sent, int *pkts_recvd, int droppc);
