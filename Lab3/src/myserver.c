@@ -503,7 +503,7 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, u_
 // returns 1 if true, 0 if false
 int dropped = 0;
 int drop_pkt(char *pkt_buf, int *pkt_count, int droppc) {
-	if ((*pkt_count) % (100 / droppc) != 0) {
+	if ((*pkt_count) % (100 / droppc) != 0 || droppc == 0) {
 		(*pkt_count) ++;
 
 		return 0;
@@ -516,7 +516,7 @@ int drop_pkt(char *pkt_buf, int *pkt_count, int droppc) {
 
 	dropped ++;
 
-	printf("DROP RATE: %f\n", (float)dropped / (float)(*pkt_count));
+	// printf("DROP RATE: %f\n", (float)dropped / (float)(*pkt_count));
 
 	time_t t = time(NULL);
 	struct tm *tm = gmtime(&t);
