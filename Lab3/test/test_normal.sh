@@ -4,7 +4,7 @@ echo "
 !!! RUNNING TEST_NORMAL !!!
 "
 
-./bin/myserver 9090 5 > server_out 2> server_err &
+./bin/myserver 9090 0 > server_out 2> server_err &
 pid=$!
 
 ./bin/myclient 127.0.0.1 9090 32 10 test_files/small_ascii.txt out/small_ascii_out.txt > client_out 2> client_err

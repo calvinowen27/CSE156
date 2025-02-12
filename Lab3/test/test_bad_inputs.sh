@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 
 echo "
-!!! RUNNING TEST_BAD_IP !!!
+!!! RUNNING TEST_BAD_INPUTS !!!
 "
 
-if [ -f out/small_ascii_out.txt ]; then
-	rm out/small_ascii_out.txt
+if [ -d out/ ]; then
+	rm -rf out/
 fi
 
 ./bin/myserver 9090 0 &
@@ -13,7 +13,7 @@ pid=$!
 
 ./bin/myclient 127.0.0.1 9090 14 0 test_files/small_ascii.txt out/small_ascii_out.txt
 
-if [ ! -s out/small_ascii_out.txt ]; then
+if [ -s out/small_ascii_out.txt ]; then
 	echo "~~~~~~~~~~~~~~~~~~~~~~~
 	TEST FAILURE
 ~~~~~~~~~~~~~~~~~~~~~~~"

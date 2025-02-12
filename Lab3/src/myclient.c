@@ -318,7 +318,7 @@ int perform_handshake(int sockfd, const char *outfile_path, struct sockaddr *soc
 		return -1;
 	}
 
-	fprintf(stderr, "Connection confirmed by server.\n");
+	fprintf(stderr, "Connection confirmed by server: %u.\n", *client_id);
 
 	return 0;
 }

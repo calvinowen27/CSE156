@@ -88,6 +88,8 @@ int accept_client(struct client_info **clients, u_int32_t *max_client_count, u_i
 				fprintf(stderr, "myserver ~ accept_client(): encountered error while initializing client_info.\n");
 				return -1;
 			}
+
+			client->expected_start_sn = (client_id + 2) % (2 * winsz);
 			
 			break;
 		}
@@ -107,6 +109,8 @@ int accept_client(struct client_info **clients, u_int32_t *max_client_count, u_i
 			fprintf(stderr, "myserver ~ accept_client(): encountered error while initializing client_info.\n");
 			return -1;
 		}
+
+		client->expected_start_sn = (client_id + 2) % (2 * winsz);
 	}
 
 	return 0;
@@ -132,7 +136,7 @@ int client_info_init(struct client_info *client, u_int32_t client_id, char *outf
 	// set client_info values
 	client->is_active = true;
 	client->id = client_id;
-	client->expected_sn = 0;
+	client->expected_sn = client_id;
 	client->outfd = outfd;
 	client->outfile_path = outfile_path;
 	client->sockaddr = sockaddr;
@@ -141,6 +145,7 @@ int client_info_init(struct client_info *client, u_int32_t client_id, char *outf
 	client->pkt_count = winsz * 2;
 	client->ack_sent = false;
 	client->terminating = false;
+	client->handshaking = true;
 
 	// allocate pkt_info buffer
 	client->pkt_info = calloc(sizeof(struct pkt_info), client->pkt_count);
@@ -197,6 +202,8 @@ int terminate_client(struct client_info **clients, u_int32_t *max_client_count, 
 		fprintf(stderr, "myserver ~ terminate_client(): could not find client with id %u to terminate.\n", client_id);
 		return -1;
 	}
+
+	fprintf(stderr, "Client %u terminated.\n", client_id);
 
 	return 0;
 }

@@ -274,8 +274,8 @@ int process_ack_pkt(char *pkt_buf, struct client_info **clients, u_int32_t *max_
 			fprintf(stderr, "myserver ~ process_data_pkt(): encountered an error terminating connection with client %u.\n", client_id);
 			return -1;
 		}
-
-		fprintf(stderr, "Client %u terminated.\n", client->id);
+	} else if (client->handshaking) {
+		client->handshaking = false;
 	}
 
 	return 0;
@@ -304,6 +304,12 @@ int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr
 	char *outfile_path = calloc(strlen(pkt_buf + WR_HEADER_SIZE) + 1, sizeof(char));
 	memcpy(outfile_path, pkt_buf + WR_HEADER_SIZE, strlen(pkt_buf + WR_HEADER_SIZE));
 
+	// accept client, initializing all client_info data and opening outfile for writing
+	if (accept_client(clients, max_client_count, client_id, outfile_path, sockaddr, sockaddr_size, winsz) < 0) {
+		fprintf(stderr, "myserver ~ process_write_req(): encountered error while accepting client %u.\n", client_id);
+		return -1;
+	}
+
 	// create response buffer with ACK opcode and client_id in rest of bytes
 	char res_buf[1 + CID_BYTES];
 	res_buf[0] = OP_ACK;
@@ -313,14 +319,21 @@ int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr
 		return -1;
 	}
 
-	if (complete_handshake(sockfd, res_buf, sockaddr, sockaddr_size, pkt_buf, client_id, pkts_sent, pkts_recvd, droppc) < 0) {
-		fprintf(stderr, "myserver ~ process_write_req(): encountered error completing handshake with client %u.\n", client_id);
-		return -1;
+	*pkts_recvd = *pkts_recvd;
+
+	// if (complete_handshake(sockfd, res_buf, sockaddr, sockaddr_size, pkt_buf, client_id, pkts_sent, pkts_recvd, droppc) < 0) {
+	// 	fprintf(stderr, "myserver ~ process_write_req(): encountered error completing handshake with client %u.\n", client_id);
+	// 	return -1;
+	// }
+
+	if (drop_pkt(res_buf, pkts_sent, droppc)) {
+		return 0;
 	}
 
-	// accept client, initializing all client_info data and opening outfile for writing
-	if (accept_client(clients, max_client_count, client_id, outfile_path, sockaddr, sockaddr_size, winsz) < 0) {
-		fprintf(stderr, "myserver ~ process_write_req(): encountered error while accepting client %u.\n", client_id);
+	// printf("sending ACK %d\n", (int)res_buf[0]);
+	// send ack with client id back to client
+	if (sendto(sockfd, res_buf, sizeof(res_buf), 0, sockaddr, *sockaddr_size) < 0) {
+		fprintf(stderr, "myserver ~ complete_handshake(): failed to send connection acceptance pkt to client.\n");
 		return -1;
 	}
 
@@ -429,6 +442,30 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, u_
 	// don't process data, but don't exit server
 	if (client == NULL) {
 		fprintf(stderr, "myserver ~ process_data_pkt(): failed to find client %u. Terminating.\n", client_id);
+		return 0;
+	}
+
+	if (client->handshaking) {
+		// resend handshake ACK
+		// create response buffer with ACK opcode and client_id in rest of bytes
+		char res_buf[1 + CID_BYTES];
+		res_buf[0] = OP_ACK;
+
+		if (assign_ack_sn(res_buf, client_id) < 0) {
+			fprintf(stderr, "myserver ~ process_write_req(): encountered error assigning client ID bytes to response pkt.\n");
+			return -1;
+		}
+
+		if (drop_pkt(res_buf, pkts_sent, droppc)) {
+			return 0;
+		}
+
+		// send ack with client id back to client
+		if (sendto(sockfd, res_buf, sizeof(res_buf), 0, client->sockaddr, *client->sockaddr_size) < 0) {
+			fprintf(stderr, "myserver ~ complete_handshake(): failed to send connection acceptance pkt to client.\n");
+			return -1;
+		}
+
 		return 0;
 	}
 
