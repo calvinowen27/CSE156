@@ -123,7 +123,7 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 	bool handshake_confirmed = false;
 	int handshake_retransmits = 0;
 
-	start_pkt_sn = (client_id + 2) % (2 * winsz);
+	start_pkt_sn = (client_id + 1) % (2 * winsz);
 
 	// once we're here, we should have client id value in client_id, meaning handshake is complete
 

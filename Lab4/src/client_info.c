@@ -166,28 +166,3 @@ int client_info_init(struct client_info *client, u_int32_t client_id, char *outf
 
 	return 0;
 }
-
-// terminate connection with client with id client_id and free necessary memory
-// close outfile and set client inactive
-// return 0 on success, -1 on error
-int terminate_client(struct client_info *client) {
-	if (client == NULL) {
-		fprintf(stderr, "myserver ~ terminate_client(): invalid ptr passed to client parameter.\n");
-		return -1;
-	}
-
-	if (client->is_active) {
-		// reset values and free allocated memory
-		client->is_active = false;
-		free(client->pkt_info);
-		free(client->outfile_path);
-		close(client->outfd);
-	} else {
-		fprintf(stderr, "myserver ~ terminate_client(): cannot terminate inactive client.\n");
-		return -1;
-	}
-
-	fprintf(stderr, "Client %u terminated.\n", client->id);
-
-	return 0;
-}

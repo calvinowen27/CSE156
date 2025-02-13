@@ -15,10 +15,14 @@ struct server_info {
 	int pkts_sent;
 	struct client_info *clients;
 	u_int32_t max_client_count;
-	// u_int32_t next_client_id;
 };
 
-struct server_info *init_server();
+// initialize server info with port and droppc, init socket and clients
+// returns pointer to server_info struct on success, NULL on failure
+struct server_info *init_server(int port, int droppc);
+
+// free allocated memory for server, terminate clients, and close socket
+void close_server(struct server_info **server);
 
 // accept new client with id client_id writing to file outfile_path
 // open outfile and add client to clients with outfd
@@ -28,7 +32,7 @@ struct client_info *accept_client(struct server_info *server, char *outfile_path
 // terminate connection with client with id client_id and free necessary memory
 // close outfile and set client inactive
 // return 0 on success, -1 on error
-int terminate_client(struct client_info **clients, u_int32_t *max_client_count, u_int32_t client_id);
+int terminate_client(struct server_info *server, u_int32_t client_id);
 
 // receive data from sockfd and echo it back as it arrives back to the client
 // this function will run forever once called, or until there is an error (returns -1)
@@ -46,6 +50,10 @@ int send_client_ack(struct server_info *server, struct client_info *client);
 // return 0 on success, -1 on error
 int send_client_ack_sn(struct server_info *server, struct client_info *client, u_int32_t ack_sn);
 
+// update ack and written status of pkts when ack is sent
+// return 0 on success, -1 on failure
+int update_pkt_info(struct client_info *client);
+
 // finds sn for client ack based on first unwritten pkt
 u_int32_t get_client_ack_sn(struct client_info *client);
 
@@ -54,6 +62,8 @@ u_int32_t get_client_ack_sn(struct client_info *client);
 // return 1 on success, 2 on select timeout, 0 on drop, and -1 on error
 int recv_pkt(struct server_info *server, char *pkt_buf);
 
+// process pkt from pkt_buf based on opcode
+// return 0 on success, -1 on error
 int process_pkt(struct server_info *server, char *pkt_buf);
 
 // initialize client connection with outfile and next client_id, send response to client with client_id
@@ -66,6 +76,8 @@ int process_write_req(struct server_info *server, char *pkt_buf);
 // return 0 on success, -1 on error
 int process_data_pkt(struct server_info *server, char *pkt_buf);
 
+// process ack pkt from client, for initializing or terminating connection
+// return 0 on success, -1 on error
 int process_ack_pkt(struct server_info *server, char *pkt_buf);
 
 // determines wether to drop a pkt based on pkt_count
