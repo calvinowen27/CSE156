@@ -16,8 +16,6 @@ int process_ack_pkt(char *pkt_buf, struct client_info **clients, u_int32_t *max_
 // return 0 on success, -1 on error
 int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, char *pkt_buf, struct client_info **clients, u_int32_t *max_client_count, u_int32_t client_id, int *pkts_sent, int *pkts_recvd, int droppc);
 
-int complete_handshake(int sockfd, char *res_buf, struct sockaddr *sockaddr, socklen_t *sockaddr_size, char *pkt_buf, u_int32_t client_id, int *pkts_sent, int *pkts_recvd, int droppc);
-
 // perform writing actions from a data pkt sent by known client
 // if payload size == 0, terminate client connection
 // if client unrecognized, don't do anything
@@ -27,6 +25,9 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, u_
 // send ack to client based on what packets were received
 // return 0 on success, -1 on error
 int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int droppc);
+
+// finds sn for client ack based on first unwritten pkt
+u_int32_t get_client_ack_sn(struct client_info *client);
 
 // determines wether to drop a pkt based on pkt_count
 // prints log message if pkt is dropped

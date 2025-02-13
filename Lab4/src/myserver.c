@@ -57,19 +57,9 @@ int main(int argc, char **argv) {
 	return 0;
 }
 
-// TODO: make sure WR pkt outfile path works with low mss
-
 // run server: accept pkts and send acks for highest pkt sn from client during breaks
 // this function will run forever once called, or until there is an error (returns -1)
 int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int droppc) {
-	// while res > 0
-	//		if select (data available)
-	//			res = recv_data()
-	//			write data to file
-	//		else
-	//			send acks
-	//			reset sn maps (client id:highest sn)
-
 	// init pkt buffer
 	char pkt_buf[BUFFER_SIZE];
 
@@ -98,8 +88,6 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int dro
 		// reset timeout
 		timeout.tv_sec = LOSS_TIMEOUT_SECS;
 		FD_SET(sockfd, &fds);
-
-		// printf("waiting...\n");
 
 		if (select(sockfd + 1, &fds, NULL, NULL, &timeout) > 0) { // check there is data to be read from socket
 			// data available at socket
@@ -162,10 +150,10 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int dro
 
 	// free all heap memory
 	for (u_int32_t i = 0; i < max_client_count; i++) {
-		// free(clients[i].ooo_file_idxs);
-		// free(clients[i].ooo_pkt_sns);
 		free(clients[i].pkt_info);
 	}
+
+	free(clients);
 
 	fprintf(stderr, "myserver ~ run(): something went wrong. Closing server.\n");
 	exit(1);
@@ -175,7 +163,31 @@ int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int dro
 // send ack to client based on what packets were received
 // return 0 on success, -1 on error
 int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int droppc) {
-	if (client->ack_sent) return 0;
+	u_int32_t ack_sn = get_client_ack_sn(client);
+
+	char ack_buf[5];
+	ack_buf[0] = OP_ACK;
+
+	if (assign_ack_sn(ack_buf, ack_sn) < 0) {
+		fprintf(stderr, "myserver ~ send_client_ack(): encountered an error assigning ACK sn %u to client %u ACK.\n", ack_sn, client->id);
+		return -1;
+	}
+
+	if (drop_pkt(ack_buf, pkts_sent, droppc)) {
+		return 0;
+	} else if (sendto(sockfd, ack_buf, 5, 0, client->sockaddr, *client->sockaddr_size) < 0) {
+		fprintf(stderr, "myserver ~ send_client_ack(): encountered an error sending ack to client %u with sn %u.\n", client->id, ack_sn);
+		return -1;
+	}
+
+	client->ack_sent = true;
+
+	return 0;
+}
+
+// finds sn for client ack based on first unwritten pkt
+u_int32_t get_client_ack_sn(struct client_info *client) {
+	if (client->ack_sent) return (client->expected_start_sn + client->pkt_count - 1) % client->pkt_count;
 
 	u_int32_t first_unwritten_sn = client->expected_start_sn;
 
@@ -192,7 +204,6 @@ int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int 
 
 		pkt->written = false;
 		pkt->ackd = true;
-		// printf("setting %u as ackd\n", first_unwritten_sn);
 
 		client->pkt_info[(first_unwritten_sn + client->winsz) % client->pkt_count].ackd = false;
 		
@@ -201,35 +212,12 @@ int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int 
 		pkts_counted ++;
 	}
 
-	// printf("first unwritten found as %u\n", first_unwritten_sn);
-
 	client->expected_start_sn = first_unwritten_sn;
 
 	// next expected is first unackd
 	client->expected_sn = client->expected_start_sn;
 
-	char ack_buf[5];
-	ack_buf[0] = OP_ACK;
-
-	u_int32_t ack_sn = (first_unwritten_sn + client->pkt_count - 1) % client->pkt_count;
-
-	if (assign_ack_sn(ack_buf, ack_sn) < 0) {
-		fprintf(stderr, "myserver ~ send_client_ack(): encountered an error assigning client %u lowest sn %u to ack buf.\n", client->id, first_unwritten_sn);
-		return -1;
-	}
-
-	if (drop_pkt(ack_buf, pkts_sent, droppc)) {
-		return 0;
-	} else if (sendto(sockfd, ack_buf, 5, 0, client->sockaddr, *client->sockaddr_size) < 0) {
-		fprintf(stderr, "myserver ~ send_client_ack(): encountered an error sending ack to client %u with sn %u.\n", client->id, first_unwritten_sn);
-		return -1;
-	}
-
-	// printf("ack %u sent\n", ack_sn);
-
-	client->ack_sent = true;
-
-	return 0;
+	return (first_unwritten_sn + client->pkt_count - 1) % client->pkt_count;
 }
 
 int process_ack_pkt(char *pkt_buf, struct client_info **clients, u_int32_t *max_client_count) {
@@ -321,11 +309,6 @@ int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr
 
 	*pkts_recvd = *pkts_recvd;
 
-	// if (complete_handshake(sockfd, res_buf, sockaddr, sockaddr_size, pkt_buf, client_id, pkts_sent, pkts_recvd, droppc) < 0) {
-	// 	fprintf(stderr, "myserver ~ process_write_req(): encountered error completing handshake with client %u.\n", client_id);
-	// 	return -1;
-	// }
-
 	if (drop_pkt(res_buf, pkts_sent, droppc)) {
 		return 0;
 	}
@@ -333,66 +316,7 @@ int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr
 	// printf("sending ACK %d\n", (int)res_buf[0]);
 	// send ack with client id back to client
 	if (sendto(sockfd, res_buf, sizeof(res_buf), 0, sockaddr, *sockaddr_size) < 0) {
-		fprintf(stderr, "myserver ~ complete_handshake(): failed to send connection acceptance pkt to client.\n");
-		return -1;
-	}
-
-	return 0;
-}
-
-int complete_handshake(int sockfd, char *res_buf, struct sockaddr *sockaddr, socklen_t *sockaddr_size, char *pkt_buf, u_int32_t client_id, int *pkts_sent, int *pkts_recvd, int droppc) {
-	// configure fds and timeout for select() call
-	fd_set fds;
-	FD_SET(sockfd, &fds);
-
-	struct timeval timeout = { LOSS_TIMEOUT_SECS, 0 };
-
-	int bytes_recvd;
-
-	u_int32_t ack_sn = 0;
-	int retransmits = -1;
-
-	while (ack_sn != client_id && retransmits < 4) {
-		// reset timeout
-		timeout.tv_sec = LOSS_TIMEOUT_SECS;
-		FD_SET(sockfd, &fds);
-
-		retransmits ++;
-
-		if (drop_pkt(res_buf, pkts_sent, droppc)) {
-			continue;
-		}
-
-		// printf("sending ACK %d\n", (int)res_buf[0]);
-		// send ack with client id back to client
-		if (sendto(sockfd, res_buf, sizeof(res_buf), 0, sockaddr, *sockaddr_size) < 0) {
-			fprintf(stderr, "myserver ~ complete_handshake(): failed to send connection acceptance pkt to client.\n");
-			return -1;
-		}
-
-		if (select(sockfd + 1, &fds, NULL, NULL, &timeout) > 0) { // check there is data to be read from socket
-			memset(pkt_buf, 0, BUFFER_SIZE);
-
-			// data available at socket
-			// read into buffer
-			if ((bytes_recvd = recvfrom(sockfd, pkt_buf, BUFFER_SIZE, 0, sockaddr, sockaddr_size)) >= 0) {
-
-				if (drop_pkt(pkt_buf, pkts_recvd, droppc)) {
-					continue;
-				}
-
-				retransmits = 0;
-
-				if ((ack_sn = get_ack_sn(pkt_buf)) == 0 && errno == 1) {
-					fprintf(stderr, "myserver ~ complete_handshake(): encountered an error reading ACK sn from handshake response.\n");
-					
-				}
-			}
-		}
-	}
-
-	if (retransmits > 3) {
-		fprintf(stderr, "myserver ~ complete_handshake(): exceeded 3 retransmissions for handshake. Rejecting client.\n");
+		fprintf(stderr, "myserver ~ process_write_req(): failed to send connection acceptance pkt to client.\n");
 		return -1;
 	}
 
@@ -462,7 +386,7 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, u_
 
 		// send ack with client id back to client
 		if (sendto(sockfd, res_buf, sizeof(res_buf), 0, client->sockaddr, *client->sockaddr_size) < 0) {
-			fprintf(stderr, "myserver ~ complete_handshake(): failed to send connection acceptance pkt to client.\n");
+			fprintf(stderr, "myserver ~ process_write_req(): failed to send connection acceptance pkt to client.\n");
 			return -1;
 		}
 

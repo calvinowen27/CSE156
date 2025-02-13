@@ -1,5 +1,5 @@
 /*
-	defines constants used for the custom protocol implemented in Lab3: Simple Reliable File Transfer
+	defines constants used for the custom protocol implemented in Lab4: Simple Reliable File Replication
 */
 
 #define TIMEOUT_SECS 30												// second until client retransmits packet window to server
