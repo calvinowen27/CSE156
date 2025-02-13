@@ -40,7 +40,7 @@ int main(int argc, char **argv) {
 
 	// initialize server socket
 
-	struct server_info *server = init_server(port, droppc);
+	struct server *server = init_server(port, droppc);
 	if (server == NULL) {
 		fprintf(stderr, "myserver ~ main(): encountered error initializing server state.\n");
 		exit(1); // TODO
@@ -60,9 +60,9 @@ int main(int argc, char **argv) {
 }
 
 // initialize server info with port and droppc, init socket and clients
-// returns pointer to server_info struct on success, NULL on failure
-struct server_info *init_server(int port, int droppc) {
-	struct server_info *server = malloc(sizeof(struct server_info));
+// returns pointer to server struct on success, NULL on failure
+struct server *init_server(int port, int droppc) {
+	struct server *server = malloc(sizeof(struct server));
 
 	server->sockfd = init_socket((struct sockaddr_in *)&server->serveraddr, NULL, port, AF_INET, SOCK_DGRAM, IPPROTO_UDP, true);
 	if (server->sockfd < 0) {
@@ -91,12 +91,12 @@ struct server_info *init_server(int port, int droppc) {
 }
 
 // free allocated memory for server, terminate clients, and close socket
-void close_server(struct server_info **server) {
+void close_server(struct server **server) {
 	struct client_info *client;
 	for (u_int32_t i = 0; i < (*server)->max_client_count; i++) {
 		client = &(*server)->clients[i];
 		if (client->is_active) {
-			terminate_client(*server, client->id);
+			terminate_client(*server, client->id); // TODO: change terminate_client() to use client_info ptr?
 		}
 	}
 
@@ -112,7 +112,7 @@ void close_server(struct server_info **server) {
 // accept new client with id client_id writing to file outfile_path
 // open outfile and add client to clients with outfd
 // return client_info ptr on success, NULL on failure
-struct client_info *accept_client(struct server_info *server, char *outfile_path, u_int32_t winsz) {
+struct client_info *accept_client(struct server *server, char *outfile_path, u_int32_t winsz) {
 	if (server == NULL) {
 		fprintf(stderr, "myserver ~ accept_client(): NULL ptr passed to server parameter.\n");
 		return NULL;
@@ -164,7 +164,7 @@ struct client_info *accept_client(struct server_info *server, char *outfile_path
 // terminate connection with client with id client_id and free necessary memory
 // close outfile and set client inactive
 // return 0 on success, -1 on error
-int terminate_client(struct server_info *server, u_int32_t client_id) {
+int terminate_client(struct server *server, u_int32_t client_id) {
 	if (client_id < 1 || client_id > server->max_client_count) {
 		fprintf(stderr, "myserver ~ terminate_client(): invalid client_id %u, max client id is %u\n", client_id, server->max_client_count);
 		return -1;
@@ -194,7 +194,7 @@ int terminate_client(struct server_info *server, u_int32_t client_id) {
 
 // run server: accept pkts and send acks for highest pkt sn from client during breaks
 // this function will run forever once called, or until there is an error (returns -1)
-int run(struct server_info *server) {
+int run(struct server *server) {
 // int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int droppc) {
 	// init pkt buffer
 	char pkt_buf[BUFFER_SIZE];
@@ -237,7 +237,7 @@ int run(struct server_info *server) {
 
 // send pkt to client
 // return 0 on success, -1 on error
-int send_pkt(struct server_info *server, struct client_info *client, char *pkt_buf, size_t pkt_size) {
+int send_pkt(struct server *server, struct client_info *client, char *pkt_buf, size_t pkt_size) {
 	if (drop_pkt(pkt_buf, &server->pkts_sent, server->droppc)) {
 		return 0;
 	}
@@ -252,7 +252,7 @@ int send_pkt(struct server_info *server, struct client_info *client, char *pkt_b
 
 // send ack to client based on what packets were received
 // return 0 on success, -1 on error
-int send_client_ack(struct server_info *server, struct client_info *client) {
+int send_client_ack(struct server *server, struct client_info *client) {
 	u_int32_t ack_sn = get_client_ack_sn(client);
 
 	if (send_client_ack_sn(server, client, ack_sn) < 0) {
@@ -265,7 +265,7 @@ int send_client_ack(struct server_info *server, struct client_info *client) {
 
 // send ack to client with given sn
 // return 0 on success, -1 on error
-int send_client_ack_sn(struct server_info *server, struct client_info *client, u_int32_t ack_sn) {
+int send_client_ack_sn(struct server *server, struct client_info *client, u_int32_t ack_sn) {
 	char ack_buf[5];
 	ack_buf[0] = OP_ACK;
 
@@ -300,7 +300,7 @@ int update_pkt_info(struct client_info *client) {
 	}
 
 	u_int32_t sn = (client->expected_start_sn + 1) % client->pkt_count, pkts = 0;
-	struct pkt_info *pkt;
+	struct s_pkt_info *pkt;
 	while (pkts < client->winsz) {
 		pkt = &client->pkt_info[sn];
 
@@ -327,7 +327,7 @@ u_int32_t get_client_ack_sn(struct client_info *client) {
 	// find first unackd pkt
 	u_int32_t pkts_counted = 0;
 	first_unwritten_sn = client->expected_start_sn;
-	struct pkt_info *pkt;
+	struct s_pkt_info *pkt;
 	while (pkts_counted < client->winsz) {
 		pkt = &client->pkt_info[first_unwritten_sn];
 		
@@ -356,7 +356,7 @@ u_int32_t get_client_ack_sn(struct client_info *client) {
 // recv pkt from socket into pkt_buf
 // pkt will potentially be dropped
 // return 1 on success, 2 on select timeout, 0 on drop, and -1 on error
-int recv_pkt(struct server_info *server, char *pkt_buf) {
+int recv_pkt(struct server *server, char *pkt_buf) {
 	fd_set fds;
 	FD_SET(server->sockfd, &fds);
 
@@ -385,7 +385,7 @@ int recv_pkt(struct server_info *server, char *pkt_buf) {
 
 // process pkt from pkt_buf based on opcode
 // return 0 on success, -1 on error
-int process_pkt(struct server_info *server, char *pkt_buf) {
+int process_pkt(struct server *server, char *pkt_buf) {
 	int opcode = get_pkt_opcode(pkt_buf);
 	
 	switch (opcode) {
@@ -417,7 +417,7 @@ int process_pkt(struct server_info *server, char *pkt_buf) {
 
 // initialize client connection with outfile and next client_id, send response to client with client_id
 // return 0 on success, -1 on error
-int process_write_req(struct server_info *server, char *pkt_buf) {
+int process_write_req(struct server *server, char *pkt_buf) {
 	if (server == NULL) {
 		fprintf(stderr, "myserver ~ process_write_req(): null ptr passed to server.\n");
 		return -1;
@@ -455,7 +455,7 @@ int process_write_req(struct server_info *server, char *pkt_buf) {
 // if payload size == 0, terminate client connection
 // if client unrecognized, don't do anything
 // return 0 on success, -1 on error
-int process_data_pkt(struct server_info *server, char *pkt_buf) {
+int process_data_pkt(struct server *server, char *pkt_buf) {
 	// if payload size == 0: terminate connection
 	// if pkt in client ooo buffer, write to file based on that
 	// else write to end of file
@@ -507,7 +507,7 @@ int process_data_pkt(struct server_info *server, char *pkt_buf) {
 		return -1;
 	}
 
-	struct pkt_info *pkt = &client->pkt_info[pkt_sn];
+	struct s_pkt_info *pkt = &client->pkt_info[pkt_sn];
 
 	// get payload size, terminate client connection if == 0
 	u_int32_t pyld_sz = get_data_pyld_sz(pkt_buf);
@@ -570,7 +570,7 @@ int process_data_pkt(struct server_info *server, char *pkt_buf) {
 
 // process ack pkt from client, for initializing or terminating connection
 // return 0 on success, -1 on error
-int process_ack_pkt(struct server_info *server, char *pkt_buf) {
+int process_ack_pkt(struct server *server, char *pkt_buf) {
 	if (server == NULL) {
 		fprintf(stderr, "myserver ~ process_ack_pkt(): NULL ptr passed to server parameter.\n");
 		return -1;

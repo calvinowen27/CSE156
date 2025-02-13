@@ -19,13 +19,6 @@
 
 #define MIN_MSS_SIZE MAX_HEADER_SIZE + 1
 
-struct pkt_ack_info {
-	off_t file_idx;
-	bool ackd;
-	int retransmits;
-	bool active;
-};
-
 int main(int argc, char **argv) {
 	// handle command line args
 	if (argc != 7) {
@@ -74,56 +67,132 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 	
-	int infd = open(infile_path, O_RDONLY, 0664);
-	if (infd < 0) {
-		fprintf(stderr, "myclient ~ main(): failed to open file %s\n", infile_path);
-		exit(1);
-	}
-
-	// initialize socket
-	struct sockaddr_in serveraddr;
-	socklen_t serveraddr_size = sizeof(serveraddr);
-	int sockfd = init_socket(&serveraddr, server_ip, server_port, AF_INET, SOCK_DGRAM, IPPROTO_UDP, false);
-	if (sockfd < 0) {
-		fprintf(stderr, "myclient ~ main(): failed to initialize socket.\n");
-		exit(1);
-	}
-
-	struct timeval server_timeout = { TIMEOUT_SECS, 0 };
-	if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &server_timeout, sizeof(server_timeout)) < 0) {
-		fprintf(stderr, "myclient ~ main(): encountered error trying to set socket timeout: %s\n", strerror(errno));
-		exit(1);
+	struct client *client = init_client(infile_path, outfile_path, server_ip, server_port, mss, winsz);
+	if (client == NULL) {
+		fprintf(stderr, "myclient ~ main(): encountered error initialize client.\n");
+		exit(1); // TODO: different for multiple threads? etc.
 	}
 
 	// send in file to server
-	if (send_file(infd, outfile_path, sockfd, (struct sockaddr *)&serveraddr, &serveraddr_size, mss, winsz) < 0) {
+	if (send_file(client) < 0) {
 		fprintf(stderr, "myclient ~ main(): failed to send or receive file %s to server.\n", infile_path);
 		exit(1);
 	}
 
 	// TODO: make sure all exit codes match spec
 
-	close(sockfd);
-	close(infd);
+	free_client(&client);
 
 	return 0;
 }
 
-// send file from fd to sockfd, also using sockaddr
-// return 0 on success, -1 on error
-int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int mss, u_int32_t winsz) {
-	u_int32_t client_id, start_pkt_sn = 0, ack_pkt_sn = -1;
-
-	// initiate handshake with WR and outfile path
-	if (perform_handshake(sockfd, outfile_path, sockaddr, sockaddr_size, &client_id, winsz) < 0) {
-		fprintf(stderr, "myclient ~ send_file(): encountered an error while performing handshake with server.\n");
-		return -1;
+// initialize client with relevant information, perform handshake with server
+// return pointer to client struct on success, NULL on failure
+struct client *init_client(const char *infile_path, const char *outfile_path, const char *server_ip, int server_port, int mss, u_int32_t winsz) {
+	// check for NULL args
+	if (infile_path == NULL) {
+		fprintf(stderr, "myclient ~ init_client(): cannot initialize client with NULL infile_path ptr.\n");
+		return NULL;
 	}
 
+	if (outfile_path == NULL) {
+		fprintf(stderr, "myclient ~ init_client(): cannot initialize client with NULL outfile_path ptr.\n");
+		return NULL;
+	}
+
+	if (server_ip == NULL) {
+		fprintf(stderr, "myclient ~ init_client(): cannot initialize client with NULL server_ip ptr.\n");
+		return NULL;
+	}
+	
+	// allocate client memory
+	struct client *client = malloc(sizeof(struct client));
+
+	if (client == NULL) {
+		fprintf(stderr, "myclient ~ init_client(): failed to allocate memory to client.\n");
+		return NULL;
+	}
+
+	// open infile
+	client->infd = open(infile_path, O_RDONLY, 0664);
+	if (client->infd < 0) {
+		fprintf(stderr, "myclient ~ init_client(): failed to open file %s\n", infile_path);
+		return NULL;
+	}
+
+	// save outfile path
+	client->outfile_path = outfile_path;
+
+	// init socket info
+	client->serveraddr_size = sizeof(client->serveraddr);
+	
+	client->sockfd = init_socket(&client->serveraddr, server_ip, server_port, AF_INET, SOCK_DGRAM, IPPROTO_UDP, false);
+	if (client->sockfd < 0) {
+		fprintf(stderr, "myclient ~ init_client(): failed to initialize socket.\n");
+		return NULL;
+	}
+
+	// set socket timeout
+	struct timeval server_timeout = { TIMEOUT_SECS, 0 };
+	if (setsockopt(client->sockfd, SOL_SOCKET, SO_RCVTIMEO, &server_timeout, sizeof(server_timeout)) < 0) {
+		fprintf(stderr, "myclient ~ init_client(): encountered error trying to set socket timeout: %s\n", strerror(errno));
+		return NULL;
+	}
+
+	client->mss = mss;
+	client->winsz = winsz;
+	client->pkt_count = 2 * winsz;
+
+	// starts at 0 (invalid), set when handshake takes place
+	client->id = 0;
+
+	// init pkt info
+	client->pkt_info = calloc(client->pkt_count, sizeof(struct c_pkt_info));
+
+	if (client->pkt_info == NULL) {
+		fprintf(stderr, "myclient ~ init_client(): failed to allocate memory to pkt_info.\n");
+		return NULL;
+	}
+
+	struct c_pkt_info *pkt;
+	for (u_int32_t sn = 0; sn < client->pkt_count; sn++) {
+		pkt = &client->pkt_info[sn];
+
+		pkt->active = false;
+		pkt->retransmits = 0;
+		pkt->ackd = false;
+		pkt->file_idx = 0;
+	}
+
+	// initiate handshake with WR and outfile path
+	if (perform_handshake(client->sockfd, client->outfile_path, &client->serveraddr, &client->serveraddr_size, &client->id, client->winsz) < 0) {
+		fprintf(stderr, "myclient ~ init_client(): encountered an error while performing handshake with server.\n");
+		return NULL;
+	}
+
+	return client;
+}
+
+// free all memory allocated in client and close infd and sockfd
+void free_client(struct client **client) {
+	close((*client)->infd);
+	close((*client)->sockfd);
+
+	free((*client)->pkt_info);
+
+	free(*client);
+
+	*client = NULL;
+}
+
+// send file from fd to sockfd, also using sockaddr
+// return 0 on success, -1 on error
+// int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int mss, u_int32_t winsz) {
+int send_file(struct client *client) {
 	bool handshake_confirmed = false;
 	int handshake_retransmits = 0;
 
-	start_pkt_sn = (client_id + 1) % (2 * winsz);
+	client->start_sn = (client->id + 1) % (client->pkt_count);
 
 	// once we're here, we should have client id value in client_id, meaning handshake is complete
 
@@ -132,14 +201,6 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 	// need to resend pkts if ack sn < last pkt sn sent
 	// send pkts from ack sn + 1
 	int pkts_sent;
-
-	struct pkt_ack_info pkt_info[2 * winsz];
-	for (u_int32_t sn = 0; sn < 2 * winsz; sn++) {
-		pkt_info[sn].active = false;
-		pkt_info[sn].retransmits = 0;
-		pkt_info[sn].ackd = false;
-		pkt_info[sn].file_idx = 0;
-	}
 
 	int recv_res;
 	u_int32_t last_sent_sn;
@@ -232,7 +293,7 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 
 		// update pkt info with ack
 		u_int32_t sn = start_pkt_sn;
-		struct pkt_ack_info *pkt;
+		struct c_pkt_info *pkt;
 		while (sn != (ack_pkt_sn + 1) % (2 * winsz)) {
 			pkt = &pkt_info[sn];
 
@@ -325,13 +386,13 @@ int perform_handshake(int sockfd, const char *outfile_path, struct sockaddr *soc
 
 // send window of pkts with content from infd
 // returns number of pkts sent, -1 on error
-int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int mss, u_int32_t winsz, u_int32_t client_id, u_int32_t start_pkt_sn, struct pkt_ack_info *pkt_info, u_int32_t *last_sent_sn) {
+int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int mss, u_int32_t winsz, u_int32_t client_id, u_int32_t start_pkt_sn, struct c_pkt_info *pkt_info, u_int32_t *last_sent_sn) {
 	char pkt_buf[mss];
 	memset(pkt_buf, 0, sizeof(pkt_buf));
 
 	// reset pkt info array
 	for (u_int32_t sn = 0; sn < 2 * winsz; sn++) {
-		struct pkt_ack_info *pkt = &pkt_info[sn];
+		struct c_pkt_info *pkt = &pkt_info[sn];
 
 		if (pkt->ackd) {
 			pkt->retransmits = 0;
@@ -347,7 +408,7 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 	}
 
 	// check start pkt for ack, if no ack, go back to file idx
-	struct pkt_ack_info *pkt = &pkt_info[start_pkt_sn];
+	struct c_pkt_info *pkt = &pkt_info[start_pkt_sn];
 	if (!pkt->ackd && pkt->active) {
 		lseek(infd, pkt->file_idx, SEEK_SET);
 	}
@@ -417,27 +478,68 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 	return pkts_sent;
 }
 
+
+int send_pkt(struct client *client, int opcode, char *pkt_buf, size_t pkt_size) {
+	if (client == NULL) {
+		fprintf(stderr, "myclient ~ send_pkt(): cannot send pkt with NULL client ptr\n");
+		return -1;
+	}
+
+	if (pkt_buf == NULL) {
+		fprintf(stderr, "myclient ~ send_pkt(): cannot send pkt with NULL pkt_buf ptr\n");
+		return -1;
+	}
+
+	if (assign_pkt_opcode(pkt_buf, opcode) < 0) {
+		fprintf(stderr, "myclient ~ send_pkt(): failed to assign opcode to pkt.\n");
+		return -1;
+	}
+
+	if (sendto(client->sockfd, pkt_buf, pkt_size, 0, &client->serveraddr, client->serveraddr_size) < 0) {
+		fprintf(stderr, "myclient ~ send_pkt(): failed to send pkt to server: opcode %u\n", opcode);
+		return -1;
+	}
+
+	if (log_pkt(client, pkt_buf) < 0) { // TODO: fix
+		fprintf(stderr, "myclient ~ send_pkt(): failed to log pkt sent.\n");
+		return -1;
+	}
+
+	return 0;
+}
+
 // wait for server response, ack_pkt_sn is output
 // return 0 on success, 1 on resend, -1 on error
-int recv_server_response(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, u_int32_t *ack_pkt_sn, u_int32_t start_sn, u_int32_t winsz) {
+int recv_server_response(struct client *client) {
+	if (client == NULL) {
+		fprintf(stderr, "myclient ~ recv_server_response(): cannot recv server response with NULL client ptr\n");
+		return -1;
+	}
+
 	char pkt_buf[MAX_SRVR_RES_SIZE];
 	memset(pkt_buf, 0, sizeof(pkt_buf));
 
 	// configure fds and timeout for select() call
 	fd_set fds;
-	FD_SET(sockfd, &fds);
+	FD_SET(client->sockfd, &fds);
 
 	struct timeval timeout = { LOSS_TIMEOUT_SECS, 0 };
 
 	int bytes_recvd;
 
-	if (select(sockfd + 1, &fds, NULL, NULL, &timeout) > 0) { // check there is data to be read from socket
-		if ((bytes_recvd = recvfrom(sockfd, pkt_buf, sizeof(pkt_buf), 0, sockaddr, sockaddr_size)) >= 0) {			
+	if (select(client->sockfd + 1, &fds, NULL, NULL, &timeout) > 0) { // check there is data to be read from socket
+		if ((bytes_recvd = recvfrom(client->sockfd, pkt_buf, sizeof(pkt_buf), 0, &client->serveraddr, &client->serveraddr_size)) >= 0) {			
 			// recvfrom success
 			int opcode = get_pkt_opcode(pkt_buf);
 			switch (opcode) {
 				case OP_ACK:
-					*ack_pkt_sn = get_ack_sn(pkt_buf);	// assign pkt sn to ack_pkt_sn
+					u_int32_t ack_sn = get_ack_sn(pkt_buf);	// assign pkt sn to ack_pkt_sn
+					if (ack_sn == 0 && errno == 1) {
+						fprintf(stderr, "myclient ~ recv_server_response(): failed to get ACK sn from pkt.\n");
+						return -1;
+					}
+
+					client->last_ackd_sn = ack_sn;
 					break;
 				case OP_ERROR:
 					// TODO: idk how this is supposed to be handled tbh so make sure it's right

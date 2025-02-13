@@ -3,7 +3,7 @@
 
 #define MAX_CLIENTS_INCREASE 5
 
-struct pkt_info {
+struct s_pkt_info {
 	off_t file_idx;
 	bool written;
 	bool ackd;
@@ -17,7 +17,7 @@ struct client_info {
 
 	u_int32_t winsz;
 	u_int32_t pkt_count;
-	struct pkt_info *pkt_info;
+	struct s_pkt_info *pkt_info;
 	u_int32_t expected_sn;
 	u_int32_t expected_start_sn;
 

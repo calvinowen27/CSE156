@@ -19,7 +19,7 @@
 
 #define MIN_MSS_SIZE MAX_HEADER_SIZE + 1
 
-struct pkt_ack_info {
+struct c_pkt_info {
 	off_t file_idx;
 	bool ackd;
 	int retransmits;
@@ -133,7 +133,7 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 	// send pkts from ack sn + 1
 	int pkts_sent;
 
-	struct pkt_ack_info pkt_info[2 * winsz];
+	struct c_pkt_info pkt_info[2 * winsz];
 	for (u_int32_t sn = 0; sn < 2 * winsz; sn++) {
 		pkt_info[sn].active = false;
 		pkt_info[sn].retransmits = 0;
@@ -232,7 +232,7 @@ int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *s
 
 		// update pkt info with ack
 		u_int32_t sn = start_pkt_sn;
-		struct pkt_ack_info *pkt;
+		struct c_pkt_info *pkt;
 		while (sn != (ack_pkt_sn + 1) % (2 * winsz)) {
 			pkt = &pkt_info[sn];
 
@@ -325,13 +325,13 @@ int perform_handshake(int sockfd, const char *outfile_path, struct sockaddr *soc
 
 // send window of pkts with content from infd
 // returns number of pkts sent, -1 on error
-int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int mss, u_int32_t winsz, u_int32_t client_id, u_int32_t start_pkt_sn, struct pkt_ack_info *pkt_info, u_int32_t *last_sent_sn) {
+int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int mss, u_int32_t winsz, u_int32_t client_id, u_int32_t start_pkt_sn, struct c_pkt_info *pkt_info, u_int32_t *last_sent_sn) {
 	char pkt_buf[mss];
 	memset(pkt_buf, 0, sizeof(pkt_buf));
 
 	// reset pkt info array
 	for (u_int32_t sn = 0; sn < 2 * winsz; sn++) {
-		struct pkt_ack_info *pkt = &pkt_info[sn];
+		struct c_pkt_info *pkt = &pkt_info[sn];
 
 		if (pkt->ackd) {
 			pkt->retransmits = 0;
@@ -347,7 +347,7 @@ int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t 
 	}
 
 	// check start pkt for ack, if no ack, go back to file idx
-	struct pkt_ack_info *pkt = &pkt_info[start_pkt_sn];
+	struct c_pkt_info *pkt = &pkt_info[start_pkt_sn];
 	if (!pkt->ackd && pkt->active) {
 		lseek(infd, pkt->file_idx, SEEK_SET);
 	}

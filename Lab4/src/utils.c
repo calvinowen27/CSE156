@@ -175,6 +175,11 @@ int init_socket(struct sockaddr_in *sockaddr, const char *ip_addr, int port, int
 // assign opcode to first byte of pkt_buf
 // return 0 on success, -1 on error
 int assign_pkt_opcode(char *pkt_buf, int opcode) {
+	if (pkt_buf == NULL) {
+		fprintf(stderr, "utils ~ assign_pkt_opcode(): cannot assign opcode to NULL pkt_buf ptr.\n");
+		return -1;
+	}
+
 	pkt_buf[0] = (u_int8_t)opcode;
 	return 0;
 }

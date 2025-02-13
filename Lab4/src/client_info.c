@@ -147,15 +147,15 @@ int client_info_init(struct client_info *client, u_int32_t client_id, char *outf
 	client->terminating = false;
 	client->handshaking = true;
 
-	// allocate pkt_info buffer
-	client->pkt_info = calloc(sizeof(struct pkt_info), client->pkt_count);
+	// allocate s_pkt_info buffer
+	client->pkt_info = calloc(sizeof(struct s_pkt_info), client->pkt_count);
 	if (client->pkt_info == NULL) {
 		fprintf(stderr, "myserver ~ client_info_init(): encountered an error initializing client pkt_info.\n");
 		return -1;	
 	}
 
 	for (u_int32_t sn = 0; sn < client->pkt_count; sn++) {
-		struct pkt_info *pkt_info = &client->pkt_info[sn];
+		struct s_pkt_info *pkt_info = &client->pkt_info[sn];
 
 		pkt_info->written = false;
 		pkt_info->file_idx = 0;
