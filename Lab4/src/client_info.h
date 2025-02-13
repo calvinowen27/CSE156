@@ -21,8 +21,8 @@ struct client_info {
 	u_int32_t expected_sn;
 	u_int32_t expected_start_sn;
 
-	struct sockaddr *sockaddr;
-	socklen_t *sockaddr_size;
+	struct sockaddr sockaddr;
+	socklen_t sockaddr_size;
 	
 	bool ack_sent;
 	bool is_active;
@@ -41,15 +41,10 @@ int increase_client_cap(struct client_info **clients, u_int32_t *max_client_coun
 
 // accept new client with id client_id writing to file outfile_path
 // return 0 on success, -1 on error
-int accept_client(struct client_info **clients, u_int32_t *max_client_count, u_int32_t client_id, char *outfile_path, struct sockaddr *sockaddr, socklen_t *sockaddr_size, u_int32_t winsz);
+// int accept_client(struct client_info **clients, u_int32_t *max_client_count, u_int32_t client_id, char *outfile_path, struct sockaddr *sockaddr, socklen_t *sockaddr_size, u_int32_t winsz);
 
 // initialize client_info with all relevant fields, allocate ooo buffers, open outfile
 // return 0 on success, -1 on error
-int client_info_init(struct client_info *client, u_int32_t client_id, char *outfile_path, struct sockaddr *sockaddr, socklen_t *sockaddr_size, u_int32_t winsz);
-
-// terminate connection with client with id client_id and free necessary memory
-// close outfile and set client inactive
-// return 0 on success, -1 on error
-int terminate_client(struct client_info **clients, u_int32_t *max_client_count, u_int32_t client_id);
+int client_info_init(struct client_info *client, u_int32_t client_id, char *outfile_path, struct sockaddr sockaddr, u_int32_t winsz);
 
 #endif

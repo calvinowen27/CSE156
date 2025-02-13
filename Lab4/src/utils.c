@@ -413,11 +413,12 @@ u_int32_t get_data_sn(char *pkt_buf) {
 	}
 }
 
-// returns payload size of pkt_buf if data pkt, 0xffffffff on error
+// returns payload size of pkt_buf if data pkt, 0 on error and sets errno to 1
 u_int32_t get_data_pyld_sz(char *pkt_buf) {
 	if (pkt_buf == NULL) {
 		fprintf(stderr, "utils ~ get_data_pyld_sz(): cannot pass NULL ptr to pkt_buf.\n");
-		return 0xffffffff;
+		errno = 1;
+		return 0;
 	}
 
 	// pkt_sn occurs right after opcode for ack, not at all for error
@@ -432,7 +433,8 @@ u_int32_t get_data_pyld_sz(char *pkt_buf) {
 		return reunite_bytes(bytes);
 	} else {
 		fprintf(stderr, "utils ~ get_data_pyld_sz(): pkt_buf does not contain valid opcode to get a sequence number.\n");
-		return 0xffffffff;
+		errno = 1;
+		return 0;
 	}
 }
 

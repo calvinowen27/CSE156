@@ -66,59 +66,59 @@ int increase_client_cap(struct client_info **clients, u_int32_t *max_client_coun
 // accept new client with id client_id writing to file outfile_path
 // open outfile and add client to clients with outfd
 // return 0 on success, -1 on failure
-int accept_client(struct client_info **clients, u_int32_t *max_client_count, u_int32_t client_id, char *outfile_path, struct sockaddr *sockaddr, socklen_t *sockaddr_size, u_int32_t winsz) {
-	if (clients == NULL || *clients == NULL) {
-		fprintf(stderr, "myserver ~ accept_client(): invalid ptr passed to clients parameter.\n");
-		return -1;
-	}
+// int accept_client(struct client_info **clients, u_int32_t *max_client_count, u_int32_t client_id, char *outfile_path, struct sockaddr *sockaddr, socklen_t *sockaddr_size, u_int32_t winsz) {
+// 	if (clients == NULL || *clients == NULL) {
+// 		fprintf(stderr, "myserver ~ accept_client(): invalid ptr passed to clients parameter.\n");
+// 		return -1;
+// 	}
 
-	if (max_client_count == NULL) {
-		fprintf(stderr, "myserver ~ accept_client(): null ptr passed to max_client_count.\n");
-		return -1;
-	}
+// 	if (max_client_count == NULL) {
+// 		fprintf(stderr, "myserver ~ accept_client(): null ptr passed to max_client_count.\n");
+// 		return -1;
+// 	}
 	
-	// find first inactive client slot in clients
-	bool inactive_client_found = false;
+// 	// find first inactive client slot in clients
+// 	bool inactive_client_found = false;
 
-	for (u_int32_t i = 0; i < *max_client_count; i++) {
-		struct client_info *client = &(*clients)[i];
-		if (!client->is_active) {
-			inactive_client_found = true;
-			if (client_info_init(client, client_id, outfile_path, sockaddr, sockaddr_size, winsz) < 0) {
-				fprintf(stderr, "myserver ~ accept_client(): encountered error while initializing client_info.\n");
-				return -1;
-			}
+// 	for (u_int32_t i = 0; i < *max_client_count; i++) {
+// 		struct client_info *client = &(*clients)[i];
+// 		if (!client->is_active) {
+// 			inactive_client_found = true;
+// 			if (client_info_init(client, client_id, outfile_path, *sockaddr, winsz) < 0) {
+// 				fprintf(stderr, "myserver ~ accept_client(): encountered error while initializing client_info.\n");
+// 				return -1;
+// 			}
 
-			client->expected_start_sn = (client_id + 2) % (2 * winsz);
+// 			client->expected_start_sn = (client_id + 2) % (2 * winsz);
 			
-			break;
-		}
-	}
+// 			break;
+// 		}
+// 	}
 
-	// if no inactive clients, allocate space for more then init new client
-	if (!inactive_client_found) {
-		u_int32_t inactive_idx = *max_client_count;
+// 	// if no inactive clients, allocate space for more then init new client
+// 	if (!inactive_client_found) {
+// 		u_int32_t inactive_idx = *max_client_count;
 
-		if (increase_client_cap(clients, max_client_count, MAX_CLIENTS_INCREASE) < 0) {
-			fprintf(stderr, "myserver ~ accept_client(): encountered error increasing client cap.\n");
-			return -1;
-		}
+// 		if (increase_client_cap(clients, max_client_count, MAX_CLIENTS_INCREASE) < 0) {
+// 			fprintf(stderr, "myserver ~ accept_client(): encountered error increasing client cap.\n");
+// 			return -1;
+// 		}
 
-		struct client_info *client = &(*clients)[inactive_idx];
-		if (client_info_init(client, client_id, outfile_path, sockaddr, sockaddr_size, winsz) < 0) {
-			fprintf(stderr, "myserver ~ accept_client(): encountered error while initializing client_info.\n");
-			return -1;
-		}
+// 		struct client_info *client = &(*clients)[inactive_idx];
+// 		if (client_info_init(client, client_id, outfile_path, *sockaddr, winsz) < 0) {
+// 			fprintf(stderr, "myserver ~ accept_client(): encountered error while initializing client_info.\n");
+// 			return -1;
+// 		}
 
-		client->expected_start_sn = (client_id + 2) % (2 * winsz);
-	}
+// 		client->expected_start_sn = (client_id + 2) % (2 * winsz);
+// 	}
 
-	return 0;
-}
+// 	return 0;
+// }
 
 // initialize client_info with all relevant fields, allocate ooo buffers, open outfile
 // return 0 on success, -1 on error
-int client_info_init(struct client_info *client, u_int32_t client_id, char *outfile_path, struct sockaddr *sockaddr, socklen_t *sockaddr_size, u_int32_t winsz) {
+int client_info_init(struct client_info *client, u_int32_t client_id, char *outfile_path, struct sockaddr sockaddr, u_int32_t winsz) {
 	if (client == NULL) {
 		fprintf(stderr, "myserver ~ client_info_init(): cannot initialize client with null ptr.\n");
 		return -1;
@@ -140,7 +140,7 @@ int client_info_init(struct client_info *client, u_int32_t client_id, char *outf
 	client->outfd = outfd;
 	client->outfile_path = outfile_path;
 	client->sockaddr = sockaddr;
-	client->sockaddr_size = sockaddr_size;
+	client->sockaddr_size = sizeof(client->sockaddr);
 	client->winsz = winsz;
 	client->pkt_count = winsz * 2;
 	client->ack_sent = false;
@@ -170,40 +170,24 @@ int client_info_init(struct client_info *client, u_int32_t client_id, char *outf
 // terminate connection with client with id client_id and free necessary memory
 // close outfile and set client inactive
 // return 0 on success, -1 on error
-int terminate_client(struct client_info **clients, u_int32_t *max_client_count, u_int32_t client_id) {
-	if (clients == NULL || *clients == NULL) {
-		fprintf(stderr, "myserver ~ terminate_client(): invalid ptr passed to clients parameter.\n");
+int terminate_client(struct client_info *client) {
+	if (client == NULL) {
+		fprintf(stderr, "myserver ~ terminate_client(): invalid ptr passed to client parameter.\n");
 		return -1;
 	}
 
-	if (max_client_count == NULL) {
-		fprintf(stderr, "myserver ~ terminate_client(): null ptr passed to max_client_count.\n");
+	if (client->is_active) {
+		// reset values and free allocated memory
+		client->is_active = false;
+		free(client->pkt_info);
+		free(client->outfile_path);
+		close(client->outfd);
+	} else {
+		fprintf(stderr, "myserver ~ terminate_client(): cannot terminate inactive client.\n");
 		return -1;
 	}
 
-	bool client_found = false;
-
-	// find client in array and free all allocated heap memory, close outfile
-	for (u_int32_t i = 0; i < *max_client_count; i++) {
-		struct client_info *client = &(*clients)[i];
-		if (client->id == client_id && client->is_active) {
-			client->is_active = false;
-			// free(client->ooo_file_idxs);
-			// free(client->ooo_pkt_sns);
-			free(client->pkt_info);
-			free(client->outfile_path);
-			close(client->outfd);
-			client_found = true;
-			break;
-		}
-	}
-
-	if (!client_found) {
-		fprintf(stderr, "myserver ~ terminate_client(): could not find client with id %u to terminate.\n", client_id);
-		return -1;
-	}
-
-	fprintf(stderr, "Client %u terminated.\n", client_id);
+	fprintf(stderr, "Client %u terminated.\n", client->id);
 
 	return 0;
 }

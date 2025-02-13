@@ -39,144 +39,224 @@ int main(int argc, char **argv) {
 	}
 
 	// initialize server socket
-	struct sockaddr_in serveraddr, clientaddr;
-	socklen_t clientaddr_size = sizeof(clientaddr);
 
-	int sockfd = init_socket(&serveraddr, NULL, port, AF_INET, SOCK_DGRAM, IPPROTO_UDP, true);
-	if (sockfd < 0) {
-		fprintf(stderr, "myserver ~ main(): server init_socket() failed.\n");
+	struct server_info *server = init_server(port, droppc);
+	if (server == NULL) {
+		fprintf(stderr, "myserver ~ main(): encountered error initializing server state.\n");
+		exit(1); // TODO
+	}
+
+	if (run(server) < 0) {
+		fprintf(stderr,"myserver ~ main(): server failed to receive from socket.\n");
+
+		close_server(server);
+
 		exit(1);
 	}
 
-	if (run(sockfd, (struct sockaddr *)&clientaddr, &clientaddr_size, droppc) < 0) {
-		fprintf(stderr,"myserver ~ main(): server failed to receive from socket.\n");
+	close_server(server);
+
+	return 0;
+}
+
+struct server_info *init_server(int port, int droppc) {
+	struct server_info *server = malloc(sizeof(struct server_info));
+
+	server->sockfd = init_socket(&server->serveraddr, NULL, port, AF_INET, SOCK_DGRAM, IPPROTO_UDP, true);
+	if (server->sockfd < 0) {
+		fprintf(stderr, "myserver ~ init_server(): server init_socket() failed.\n");
+		return NULL;
 	}
 
-	close(sockfd);
+	server->clientaddr_size = sizeof(server->clientaddr);
+
+	server->droppc = droppc;
+	server->pkts_recvd = 0;
+	server->pkts_sent = 0;
+
+	server->max_client_count = START_CLIENTS;
+
+	// initialize clients
+	server->clients = init_clients(server->max_client_count);
+	if (server->clients == NULL) {
+		fprintf(stderr, "myserver ~ init_server(): encountered error initializing clients.\n");
+		return NULL;
+	}
+
+	// server->next_client_id = 1;
+
+	return server;
+}
+
+// accept new client with id client_id writing to file outfile_path
+// open outfile and add client to clients with outfd
+// return client_info ptr on success, NULL on failure
+struct client_info *accept_client(struct server_info *server, char *outfile_path, u_int32_t winsz) {
+	if (server == NULL) {
+		fprintf(stderr, "myserver ~ accept_client(): NULL ptr passed to server parameter.\n");
+		return NULL;
+	}
+
+	if (outfile_path == NULL) {
+		fprintf(stderr, "myserver ~ accept_client(): NULL ptr passed to outfile_path parameter.\n");
+		return NULL;
+	}
+	
+	// find first inactive client slot in clients
+	bool inactive_client_found = false;
+
+	struct client_info *client;
+	for (u_int32_t id = 1; id <= server->max_client_count; id++) {
+		client = &server->clients[id - 1];
+		if (!client->is_active) {
+			inactive_client_found = true;
+			if (client_info_init(client, id, outfile_path, server->clientaddr, winsz) < 0) {
+				fprintf(stderr, "myserver ~ accept_client(): encountered error while initializing client_info.\n");
+				return NULL;
+			}
+
+			// client->expected_start_sn = (client->id + 1) % client->pkt_count;
+			
+			break;
+		}
+	}
+
+	// if no inactive clients, allocate space for more then init new client
+	if (!inactive_client_found) {
+		u_int32_t id = server->max_client_count + 1;
+
+		if (increase_client_cap(&server->clients, &server->max_client_count, MAX_CLIENTS_INCREASE) < 0) {
+			fprintf(stderr, "myserver ~ accept_client(): encountered error increasing client cap.\n");
+			return NULL;
+		}
+
+		client = &server->clients[id - 1];
+		if (client_info_init(client, id, outfile_path, server->clientaddr, winsz) < 0) {
+			fprintf(stderr, "myserver ~ accept_client(): encountered error while initializing client_info.\n");
+			return NULL;
+		}
+
+		// client->expected_start_sn = (client->id + 1) % client->pkt_count;
+	}
+
+	client->expected_start_sn = (client->id + 1) % client->pkt_count;
+
+	// server->next_client_id ++;
+
+	return client;
+}
+
+// terminate connection with client with id client_id and free necessary memory
+// close outfile and set client inactive
+// return 0 on success, -1 on error
+int terminate_client(struct server_info *server, u_int32_t client_id) {
+	struct client_info *client = &server->clients[client_id - 1];
+	if (client == NULL) {
+		fprintf(stderr, "myserver ~ terminate_client(): invalid ptr passed to client parameter.\n");
+		return -1;
+	}
+
+	if (client->is_active) {
+		// reset values and free allocated memory
+		client->is_active = false;
+		free(client->pkt_info);
+		free(client->outfile_path);
+		close(client->outfd);
+	} else {
+		fprintf(stderr, "myserver ~ terminate_client(): cannot terminate inactive client.\n");
+		return -1;
+	}
+
+	fprintf(stderr, "Client %u terminated.\n", client->id);
 
 	return 0;
 }
 
 // run server: accept pkts and send acks for highest pkt sn from client during breaks
 // this function will run forever once called, or until there is an error (returns -1)
-int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int droppc) {
+int run(struct server_info *server) {
+// int run(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int droppc) {
 	// init pkt buffer
 	char pkt_buf[BUFFER_SIZE];
 
-	u_int32_t max_client_count = START_CLIENTS;
-
-	// initialize clients
-	struct client_info *clients = init_clients(max_client_count);
-	if (clients == NULL) {
-		fprintf(stderr, "myserver ~ run(): encountered error initializing clients.\n");
-		return -1;
-	}
-
-	int pkts_recvd = 0, pkts_sent = 0;
-
-	// configure fds and timeout for select() call
-	fd_set fds;
-	FD_SET(sockfd, &fds);
-
-	struct timeval timeout = { LOSS_TIMEOUT_SECS, 0 };
-
-	u_int32_t next_client_id = 1;
-
-	int bytes_recvd;
+	int recv_res;
 
 	while (1) { // hopefully run forever
-		// reset timeout
-		timeout.tv_sec = LOSS_TIMEOUT_SECS;
-		FD_SET(sockfd, &fds);
-
-		if (select(sockfd + 1, &fds, NULL, NULL, &timeout) > 0) { // check there is data to be read from socket
-			// data available at socket
-			// read into buffer
-			if ((bytes_recvd = recvfrom(sockfd, pkt_buf, BUFFER_SIZE, 0, sockaddr, sockaddr_size)) >= 0) {
-
-				if (drop_pkt(pkt_buf, &pkts_recvd, droppc)) {
-					// printf("continue waiting for data\n");
-					continue;
-				}
-
-				int opcode = get_pkt_opcode(pkt_buf);
-				
-				switch (opcode) {
-					case OP_WR:
-						if (process_write_req(sockfd, sockaddr, sockaddr_size, pkt_buf, &clients, &max_client_count, next_client_id, &pkts_sent, &pkts_recvd, droppc) < 0) {
-							fprintf(stderr, "myserver ~ run(): encountered error processing write request.\n");
-							return -1;
-						}
-
-						next_client_id++;
-						break;
-					case OP_DATA:
-						if (process_data_pkt(sockfd, pkt_buf, &clients, &max_client_count, &pkts_sent, droppc) < 0) {
-							fprintf(stderr, "myserver ~ run(): encountered error processing data pkt.\n");
-							return -1;
-						}
-						break;
-					case OP_ACK:
-						if (process_ack_pkt(pkt_buf, &clients, &max_client_count) < 0) {
-							fprintf(stderr, "myserver ~ run(): encountered error processing ack pkt.\n");
-							return -1;
-						}
-						break;
-					default:
-						// do nothing?
-						break;
-				}
-
-				memset(pkt_buf, 0, BUFFER_SIZE);
-			} else { // recvfrom() failure
-				fprintf(stderr, "myserver ~ run(): encountered error with recvfrom() call.\n");
+		if ((recv_res = recv_pkt(server, pkt_buf)) == 1) {
+			// pkt recvd successfully
+			if (process_pkt(server, pkt_buf) < 0) {
+				fprintf(stderr, "myserver ~ run(): encountered error processing pkt.\n");
 				return -1;
 			}
-		} else {
-			// send acks and reset id:sn maps
-			for (u_int32_t i = 0; i < max_client_count; i++) {
-				struct client_info *client = &clients[i];
+
+			memset(pkt_buf, 0, BUFFER_SIZE);
+		} else if (recv_res == 2) {
+			// select timeout, send ACKs
+			struct client_info *client;
+			for (u_int32_t i = 0; i < server->max_client_count; i++) {
+				client = &server->clients[i];
 				if (!client->is_active) {
 					continue;
 				}
 
-				if (send_client_ack(client, sockfd, &pkts_sent, droppc) < 0) {
+				if (send_client_ack(server, client) < 0) {
 					fprintf(stderr, "myserver ~ run(): encountered error while sending ack to client.\n");
 					return -1;
 				}
 			}
+		} else if (recv_res < 0) {
+			// error
+			fprintf(stderr, "myserver ~ run(): encountered error receiving pkt with recv_pkt() call.\n");
+			return -1;
 		}
+		// continue otherwise (0)
 	}
 
-	// free all heap memory
-	for (u_int32_t i = 0; i < max_client_count; i++) {
-		free(clients[i].pkt_info);
-	}
-
-	free(clients);
-
-	fprintf(stderr, "myserver ~ run(): something went wrong. Closing server.\n");
-	exit(1);
 	return -1; // TODO: check if exit code is needed
+}
+
+// send pkt to client
+// return 0 on success, -1 on error
+int send_pkt(struct server_info *server, struct client_info *client, char *pkt_buf, size_t pkt_size) {
+	if (drop_pkt(pkt_buf, server->pkts_sent, server->droppc)) {
+		return 0;
+	}
+
+	if (sendto(server->sockfd, pkt_buf, pkt_size, 0, &client->sockaddr, client->sockaddr_size) < 0) {
+		fprintf(stderr, "myserver ~ send_pkt(): encountered an error sending pkt to client %u.\n", client->id);
+		return -1;
+	}
+
+	return 0;
 }
 
 // send ack to client based on what packets were received
 // return 0 on success, -1 on error
-int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int droppc) {
+// int send_client_ack(struct client_info *client, int sockfd, int *pkts_sent, int droppc) {
+int send_client_ack(struct server_info *server, struct client_info *client) {
 	u_int32_t ack_sn = get_client_ack_sn(client);
 
+	if (send_client_ack_sn(server, client, ack_sn) < 0) {
+		fprintf(stderr, "myserver ~ send_client_ack(): encountered error sending ACK...\n");
+		return -1;
+	}
+
+	return 0;
+}
+
+// send ack to client with given sn
+// return 0 on success, -1 on error
+int send_client_ack_sn(struct server_info *server, struct client_info *client, u_int32_t ack_sn) {
 	char ack_buf[5];
 	ack_buf[0] = OP_ACK;
 
 	if (assign_ack_sn(ack_buf, ack_sn) < 0) {
-		fprintf(stderr, "myserver ~ send_client_ack(): encountered an error assigning ACK sn %u to client %u ACK.\n", ack_sn, client->id);
+		fprintf(stderr, "myserver ~ send_client_ack_sn(): encountered an error assigning ACK sn %u to client %u ACK.\n", ack_sn, client->id);
 		return -1;
 	}
 
-	if (drop_pkt(ack_buf, pkts_sent, droppc)) {
-		return 0;
-	} else if (sendto(sockfd, ack_buf, 5, 0, client->sockaddr, *client->sockaddr_size) < 0) {
-		fprintf(stderr, "myserver ~ send_client_ack(): encountered an error sending ack to client %u with sn %u.\n", client->id, ack_sn);
+	if (send_pkt(server, client, ack_buf, sizeof(ack_buf)) < 0) {
+		fprintf(stderr, "myserver ~ send_client_ack_sn(): encountered error sending ACK %u to client %u.\n", ack_sn, client->id);
 		return -1;
 	}
 
@@ -220,65 +300,71 @@ u_int32_t get_client_ack_sn(struct client_info *client) {
 	return (first_unwritten_sn + client->pkt_count - 1) % client->pkt_count;
 }
 
-int process_ack_pkt(char *pkt_buf, struct client_info **clients, u_int32_t *max_client_count) {
-	if (clients == NULL || *clients == NULL) {
-		fprintf(stderr, "myserver ~ process_data_pkt(): invalid ptr passed to clients parameter.\n");
-		return -1;
-	}
+// recv pkt from socket into pkt_buf
+// pkt will potentially be dropped
+// return 1 on success, 2 on select timeout, 0 on drop, and -1 on error
+int recv_pkt(struct server_info *server, char *pkt_buf) {
+// int recv_pkt(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, char *pkt_buf, int droppc, int *pkts_recvd) {
+	fd_set fds;
+	FD_SET(server->sockfd, &fds);
 
-	if (max_client_count == NULL) {
-		fprintf(stderr, "myserver ~ process_data_pkt(): null ptr passed to max_client_count.\n");
-		return -1;
-	}
+	struct timeval timeout = { LOSS_TIMEOUT_SECS, 0 };
 
-	if (pkt_buf == NULL) {
-		fprintf(stderr, "myserver ~ process_data_pkt(): invalid ptr passed to pkt_buf parameter.\n");
-		return -1;
-	}
+	if (select(server->sockfd + 1, &fds, NULL, NULL, &timeout) > 0) { // check there is data to be read from socket
+		// data available at socket
+		// read into buffer
+		if (recvfrom(server->sockfd, pkt_buf, BUFFER_SIZE, 0, &server->clientaddr, &server->clientaddr_size) >= 0) {
 
-	// get client id from pkt and check if we are serving that client
-	u_int32_t client_id = get_ack_sn(pkt_buf);
-	if (client_id == 0) {
-		fprintf(stderr, "myserver ~ process_data_pkt(): encountered an error getting client_id from pkt.\n");
-		return -1;
-	}
+			// pkt dropped
+			if (drop_pkt(pkt_buf, &server->pkts_recvd, server->droppc)) {
+				return 0;
+			}
 
-	struct client_info *client = NULL;
-	for (u_int32_t i = 0; i < *max_client_count; i++) {
-		if ((*clients)[i].id == client_id) {
-			client = &(*clients)[i];
-			break;
-		}
-	}
-
-	// don't process data, but don't exit server
-	if (client == NULL) {
-		fprintf(stderr, "myserver ~ process_data_pkt(): failed to find client %u. Terminating.\n", client_id);
-		return 0;
-	}
-
-	if (client->terminating) {
-		if (terminate_client(clients, max_client_count, client_id) < 0) {
-			fprintf(stderr, "myserver ~ process_data_pkt(): encountered an error terminating connection with client %u.\n", client_id);
+			return 1; // pkt recvd successfully
+		} else { // recvfrom() failure
+			// TODO: check this
+			fprintf(stderr, "myserver ~ recv_pkt(): encountered error with recvfrom() call.\n");
 			return -1;
 		}
-	} else if (client->handshaking) {
-		client->handshaking = false;
+	} else {
+		return 2;
 	}
+}
 
-	return 0;
+int process_pkt(struct server_info *server, char *pkt_buf) {
+	int opcode = get_pkt_opcode(pkt_buf);
+	
+	switch (opcode) {
+		case OP_WR:
+			if (process_write_req(server, pkt_buf) < 0) {
+				fprintf(stderr, "myserver ~ process_pkt(): encountered error processing write request.\n");
+				return -1;
+			}
+			break;
+		case OP_DATA:
+			if (process_data_pkt(server, pkt_buf) < 0) {
+				fprintf(stderr, "myserver ~ process_pkt(): encountered error processing data pkt.\n");
+				return -1;
+			}
+			break;
+		case OP_ACK:
+			if (process_ack_pkt(pkt_buf, &clients, &max_client_count) < 0) {
+				fprintf(stderr, "myserver ~ process_pkt(): encountered error processing ack pkt.\n");
+				return -1;
+			}
+			break;
+		default:
+			// do nothing?
+			break;
+	}
 }
 
 // initialize client connection with outfile and next client_id, send response to client with client_id
 // return 0 on success, -1 on error
-int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, char *pkt_buf, struct client_info **clients, u_int32_t *max_client_count, u_int32_t client_id, int *pkts_sent, int *pkts_recvd, int droppc) {
-	if (clients == NULL || *clients == NULL) {
-		fprintf(stderr, "myserver ~ process_write_req(): invalid ptr passed to clients parameter.\n");
-		return -1;
-	}
-
-	if (max_client_count == NULL) {
-		fprintf(stderr, "myserver ~ process_write_req(): null ptr passed to max_client_count.\n");
+// int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, char *pkt_buf, struct client_info **clients, u_int32_t *max_client_count, u_int32_t client_id, int *pkts_sent, int droppc) {
+int process_write_req(struct server_info *server, char *pkt_buf) {
+	if (server == NULL) {
+		fprintf(stderr, "myserver ~ process_write_req(): null ptr passed to server.\n");
 		return -1;
 	}
 
@@ -293,32 +379,19 @@ int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr
 	memcpy(outfile_path, pkt_buf + WR_HEADER_SIZE, strlen(pkt_buf + WR_HEADER_SIZE));
 
 	// accept client, initializing all client_info data and opening outfile for writing
-	if (accept_client(clients, max_client_count, client_id, outfile_path, sockaddr, sockaddr_size, winsz) < 0) {
-		fprintf(stderr, "myserver ~ process_write_req(): encountered error while accepting client %u.\n", client_id);
+	struct client_info *client = accept_client(server, outfile_path, winsz);
+	if (client == NULL) {
+		fprintf(stderr, "myserver ~ process_write_req(): encountered error while accepting client %u.\n", server->next_client_id);
 		return -1;
 	}
 
-	// create response buffer with ACK opcode and client_id in rest of bytes
-	char res_buf[1 + CID_BYTES];
-	res_buf[0] = OP_ACK;
-
-	if (assign_ack_sn(res_buf, client_id) < 0) {
-		fprintf(stderr, "myserver ~ process_write_req(): encountered error assigning client ID bytes to response pkt.\n");
+	// send ack with client id as sn
+	if (send_client_ack_sn(server, client, client->id) < 0) {
+		fprintf(stderr, "myserver ~ process_write_req(): encountered error sending ACK with client id %u to accept client.\n", client->id);
 		return -1;
 	}
 
-	*pkts_recvd = *pkts_recvd;
-
-	if (drop_pkt(res_buf, pkts_sent, droppc)) {
-		return 0;
-	}
-
-	// printf("sending ACK %d\n", (int)res_buf[0]);
-	// send ack with client id back to client
-	if (sendto(sockfd, res_buf, sizeof(res_buf), 0, sockaddr, *sockaddr_size) < 0) {
-		fprintf(stderr, "myserver ~ process_write_req(): failed to send connection acceptance pkt to client.\n");
-		return -1;
-	}
+	client->handshaking = true;
 
 	return 0;
 }
@@ -327,24 +400,20 @@ int process_write_req(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr
 // if payload size == 0, terminate client connection
 // if client unrecognized, don't do anything
 // return 0 on success, -1 on error
-int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, u_int32_t *max_client_count, int *pkts_sent, int droppc) {
+// int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, u_int32_t *max_client_count, int *pkts_sent, int droppc) {
+int process_data_pkt(struct server_info *server, char *pkt_buf) {
 	// if payload size == 0: terminate connection
 	// if pkt in client ooo buffer, write to file based on that
 	// else write to end of file
 	// if client unrecognized, idk don't do it
 
-	if (clients == NULL || *clients == NULL) {
-		fprintf(stderr, "myserver ~ process_data_pkt(): invalid ptr passed to clients parameter.\n");
-		return -1;
-	}
-
-	if (max_client_count == NULL) {
-		fprintf(stderr, "myserver ~ process_data_pkt(): null ptr passed to max_client_count.\n");
+	if (server == NULL) {
+		fprintf(stderr, "myserver ~ process_data_pkt(): NULL ptr passed to server parameter.\n");
 		return -1;
 	}
 
 	if (pkt_buf == NULL) {
-		fprintf(stderr, "myserver ~ process_data_pkt(): invalid ptr passed to pkt_buf parameter.\n");
+		fprintf(stderr, "myserver ~ process_data_pkt(): NULL ptr passed to pkt_buf parameter.\n");
 		return -1;
 	}
 
@@ -355,38 +424,29 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, u_
 		return -1;
 	}
 
-	struct client_info *client = NULL;
-	for (u_int32_t i = 0; i < *max_client_count; i++) {
-		if ((*clients)[i].id == client_id) {
-			client = &(*clients)[i];
-			break;
-		}
+	if (client_id < 1 || client_id > server->max_client_count) {
+		fprintf(stderr, "myserver ~ process_data_pkt(): invalid client_id provided: %u, max client_id is %u\n", client_id, server->max_client_count);
 	}
 
+	struct client_info *client = &server->clients[client_id - 1];
+
+	// for (u_int32_t i = 0; i < *max_client_count; i++) {
+	// 	if ((*clients)[i].id == client_id) {
+	// 		client = &(*clients)[i];
+	// 		break;
+	// 	}
+	// }
+
 	// don't process data, but don't exit server
-	if (client == NULL) {
+	if (client == NULL || !client->is_active) {
 		fprintf(stderr, "myserver ~ process_data_pkt(): failed to find client %u. Terminating.\n", client_id);
 		return 0;
 	}
 
 	if (client->handshaking) {
-		// resend handshake ACK
-		// create response buffer with ACK opcode and client_id in rest of bytes
-		char res_buf[1 + CID_BYTES];
-		res_buf[0] = OP_ACK;
-
-		if (assign_ack_sn(res_buf, client_id) < 0) {
-			fprintf(stderr, "myserver ~ process_write_req(): encountered error assigning client ID bytes to response pkt.\n");
-			return -1;
-		}
-
-		if (drop_pkt(res_buf, pkts_sent, droppc)) {
-			return 0;
-		}
-
-		// send ack with client id back to client
-		if (sendto(sockfd, res_buf, sizeof(res_buf), 0, client->sockaddr, *client->sockaddr_size) < 0) {
-			fprintf(stderr, "myserver ~ process_write_req(): failed to send connection acceptance pkt to client.\n");
+		// resend handshake ACK (not supposed to get data yet)
+		if (send_client_ack_sn(server, client, client->id) < 0) {
+			fprintf(stderr, "myserver ~ process_data_pkt(): encountered error resending client %u handshake ACK.\n", client->id);
 			return -1;
 		}
 
@@ -404,7 +464,7 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, u_
 
 	// get payload size, terminate client connection if == 0
 	u_int32_t pyld_sz = get_data_pyld_sz(pkt_buf);
-	if (pyld_sz == 0xffffffff) {
+	if (pyld_sz == 0 && errno == 1) {
 		fprintf(stderr, "myserver ~ process_data_pkt(): encountered an error getting payload size from data pkt.\n");
 		return -1;
 	} else if (pyld_sz == 0 && pkt_sn == client->expected_sn) {
@@ -412,8 +472,9 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, u_
 		client->terminating = true;
 		pkt->written = true;
 
+		// ack final pkt to finish terminating client
 		fprintf(stderr, "myserver ~ Payload size of 0 encountered. Terminating connection with client %u.\n", client_id);
-		if (send_client_ack(client, sockfd, pkts_sent, droppc) < 0) {
+		if (send_client_ack_sn(server, client, pkt_sn) < 0) {
 			fprintf(stderr, "myserver ~ process_data_pkt(): encountered error sending final ack to client.\n");
 			return -1;
 		}
@@ -423,7 +484,6 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, u_
 
 	// if we've made it to here, everything is valid and client is writing data to file
 
-	// write based on sn, check for ooo
 	if (pkt_sn == client->expected_sn) { // normal, write bytes to outfile
 		// printf("received expected: %u\n", pkt_sn);
 		client->ack_sent = false;
@@ -443,20 +503,56 @@ int process_data_pkt(int sockfd, char *pkt_buf, struct client_info **clients, u_
 
 		client->expected_sn = (pkt_sn + 1) % client->pkt_count;
 	} else {
+		// unexpected, send ack for last valid pkt
 		// printf("unexpected pkt recvd: %u, expected %u\n", pkt_sn, client->expected_sn);
-		if (send_client_ack(client, sockfd, pkts_sent, droppc) < 0) {
+		// if (send_client_ack(server, client) < 0) {
+		// 	fprintf(stderr, "myserver ~ process_data_pkt(): encountered error sending ack to client.\n");
+		// 	return -1;
+		// }
+
+		// ACK last received valid pkt (whatever was before expected sn)
+		u_int32_t ack_sn = (client->expected_sn + client->pkt_count - 1) % client->pkt_count;
+		if (send_client_ack_sn(server, client, ack_sn) < 0) {
 			fprintf(stderr, "myserver ~ process_data_pkt(): encountered error sending ack to client.\n");
 			return -1;
 		}
 	}
 
-	// printf("pkt_sn: %u, expected_start_sn + pkt_count - 1: %u, pkt_count: %u\n", pkt_sn, client->expected_start_sn + client->pkt_count - 1, client->pkt_count);
-
+	// check if last pkt for fast ACK, instead of waiting for timeout
 	if (pkt_sn == (client->expected_start_sn + client->winsz - 1) % client->pkt_count) {
-		if (send_client_ack(client, sockfd, pkts_sent, droppc) < 0) {
+		if (send_client_ack_sn(server, client, pkt_sn) < 0) {
 			fprintf(stderr, "myserver ~ process_data_pkt(): encountered error sending ack to client.\n");
 			return -1;
 		}
+	}
+
+	return 0;
+}
+
+int process_ack_pkt(struct server_info *server, struct client_info *client, char *pkt_buf) {
+// int process_ack_pkt(char *pkt_buf, struct client_info **clients, u_int32_t *max_client_count) {
+	if (client == NULL) {
+		fprintf(stderr, "myserver ~ process_ack_pkt(): NULL ptr passed to client parameter.\n");
+		return -1;
+	}
+
+	if (server == NULL) {
+		fprintf(stderr, "myserver ~ process_ack_pkt(): NULL ptr passed to server parameter.\n");
+		return -1;
+	}
+
+	if (pkt_buf == NULL) {
+		fprintf(stderr, "myserver ~ process_ack_pkt(): invalid ptr passed to pkt_buf parameter.\n");
+		return -1;
+	}
+
+	if (client->terminating) {
+		if (terminate_client(clients, max_client_count, client_id) < 0) {
+			fprintf(stderr, "myserver ~ process_ack_pkt(): encountered an error terminating connection with client %u.\n", client_id);
+			return -1;
+		}
+	} else if (client->handshaking) {
+		client->handshaking = false;
 	}
 
 	return 0;
