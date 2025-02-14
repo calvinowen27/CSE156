@@ -27,6 +27,9 @@ struct client {
 	u_int32_t last_ackd_sn;
 
 	struct c_pkt_info *pkt_info;
+
+	bool handshake_confirmed;
+	int handshake_retransmits;
 };
 
 // initialize client with relevant information, perform handshake with server
@@ -44,22 +47,30 @@ int send_file(struct client *client);
 // initiate handshake with server, which should respond with the client id
 // client id value is put in *client_id
 // return 0 on success, -1 on error
-int perform_handshake(int sockfd, const char *outfile_path, struct sockaddr *sockaddr, socklen_t *sockaddr_size, u_int32_t *client_id, u_int32_t winsz);
+int start_handshake(struct client *client);
+
+int finish_handshake(struct client *client);
 
 // send window of pkts with content from infd
 // returns number of pkts sent, -1 on error
-int send_window_pkts(int infd, int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int mss, u_int32_t winsz, u_int32_t client_id, u_int32_t start_pkt_sn, struct c_pkt_info *pkt_idx_pairs, u_int32_t *last_sent_sn);
+int send_window_pkts(struct client *client);
 
-int send_server_pkt(struct client *client, int opcode, char *pkt_buf, size_t pkt_size);
+int send_pkt(struct client *client, int opcode, char *pkt_buf, size_t pkt_size);
+
+int send_wr_pkt(struct client *client);
+
+int send_ack_pkt(struct client *client, u_int32_t ack_sn);
+
+int send_data_pkt(struct client *client, char *pkt_buf, size_t pkt_size, u_int32_t pyld_sz);
+
+int update_pkt_info(struct client *client);
 
 // wait for server response, ack_pkt_sn is output
 // return 0 on success, -1 on error
-int recv_server_response(int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, u_int32_t *ack_pkt_sn, u_int32_t start_sn, u_int32_t winsz);
-
-int recv_pkt(struct client *client, char *pkt_buf);
+int recv_server_response(struct client *client);
 
 // prints log message of pkt
 // returns 0 on success, -1 on error
-int log_pkt(char *pkt_buf, u_int32_t start_sn, u_int32_t winsz);
+int log_pkt(struct client *client, char *pkt_buf);
 
 #endif

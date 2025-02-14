@@ -135,8 +135,6 @@ struct client_info *accept_client(struct server *server, char *outfile_path, u_i
 				fprintf(stderr, "myserver ~ accept_client(): encountered error while initializing client_info.\n");
 				return NULL;
 			}
-
-			// client->expected_start_sn = (client->id + 1) % client->pkt_count;
 			
 			break;
 		}

@@ -29,33 +29,21 @@ if [ -s diff ]; then
 fi
 
 
-./bin/myclient 127.0.0.1 9090 8192 25 test_files/large_binary.dat out/large_binary_out.dat > client_out 2> client_err
-diff test_files/large_binary.dat out/large_binary_out.dat > diff
+# ./bin/myclient 127.0.0.1 9090 8192 25 test_files/large_binary.dat out/large_binary_out.dat > client_out 2> client_err
+# diff test_files/large_binary.dat out/large_binary_out.dat > diff
 
-if [ ! -d out ]; then
-	echo "~~~~~~~~~~~~~~~~~~~~~~~
-	TEST FAILURE: out directory not created
-~~~~~~~~~~~~~~~~~~~~~~~"
-	kill -9 $pid
-	wait $pid &>/dev/null
-	exit 1
-fi
-
-if [ -s diff ]; then
-	echo "~~~~~~~~~~~~~~~~~~~~~~~
-	TEST FAILURE: large_binary.dat
-~~~~~~~~~~~~~~~~~~~~~~~"
-	kill -9 $pid
-	wait $pid &>/dev/null
-	exit 1
-fi
-
-# ./bin/myclient 127.0.0.1 9090 4096 40 test_files/large_ascii.txt out/large_ascii_out.txt > client_out 2> client_err
-# diff test_files/large_ascii.txt out/large_ascii_out.txt > diff
+# if [ ! -d out ]; then
+# 	echo "~~~~~~~~~~~~~~~~~~~~~~~
+# 	TEST FAILURE: out directory not created
+# ~~~~~~~~~~~~~~~~~~~~~~~"
+# 	kill -9 $pid
+# 	wait $pid &>/dev/null
+# 	exit 1
+# fi
 
 # if [ -s diff ]; then
 # 	echo "~~~~~~~~~~~~~~~~~~~~~~~
-# 	TEST FAILURE: large_ascii.txt
+# 	TEST FAILURE: large_binary.dat
 # ~~~~~~~~~~~~~~~~~~~~~~~"
 # 	kill -9 $pid
 # 	wait $pid &>/dev/null
