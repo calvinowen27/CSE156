@@ -71,6 +71,8 @@ int recv_server_response(struct client *client);
 
 // prints log message of pkt
 // returns 0 on success, -1 on error
-int log_pkt(struct client *client, char *pkt_buf);
+int log_pkt_sent(struct client *client, char *pkt_buf);
+
+int log_pkt_recvd(struct client *client, char *pkt_buf);
 
 #endif

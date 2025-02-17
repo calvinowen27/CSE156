@@ -4,7 +4,26 @@ echo "
 !!! RUNNING TEST_NORMAL !!!
 "
 
-./bin/myserver 9090 0 > server_out 2> server_err &
+ctrlc_received=0
+
+function handle_ctrlc()
+{
+    echo
+    if [[ $ctrlc_received == 0 ]]
+    then
+        kill -9 $pid
+		wait $pid &>/dev/null
+		exit
+        ctrlc_received=1
+    else
+        exit
+    fi
+}
+
+# trapping the SIGINT signal
+trap handle_ctrlc SIGINT
+
+./bin/myserver 9090 3 > server_out 2> server_err &
 pid=$!
 
 ./bin/myclient 127.0.0.1 9090 32 10 test_files/small_ascii.txt out/small_ascii_out.txt > client_out 2> client_err

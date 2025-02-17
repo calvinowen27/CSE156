@@ -189,6 +189,85 @@ void free_client(struct client **client) {
 	*client = NULL;
 }
 
+// TODO: don't log handshake ACK?
+
+// initiate handshake with server, which should respond with the client id
+// client id value is put in *client_id
+// return 0 on success, -1 on error
+// int start_handshake(int sockfd, const char *outfile_path, struct sockaddr *sockaddr, socklen_t *sockaddr_size, u_int32_t *client_id, u_int32_t winsz) {
+int start_handshake(struct client *client) {
+	if (client == NULL) {
+		fprintf(stderr, "myclient ~ start_handshake(): cannot perform handshake with NULL client ptr.\n");
+		return -1;
+	}
+
+	int recv_res = 1;
+	int retransmits = -1;
+
+	do {
+		retransmits ++;
+
+		if (retransmits > 3) {
+			fprintf(stderr, "Reached max re-transmission limit\n");
+			exit(4);
+		}
+
+		if (send_wr_pkt(client) < 0) {
+			fprintf(stderr, "myclient ~ start_handshake(): failed to send WR pkt to server.\n");
+			return -1;
+		}
+
+		fprintf(stderr, "Initial write request packet sent.\n");
+	} while ((recv_res = recv_server_response(client)) == 1);
+
+	client->id = client->last_ackd_sn;
+
+	fprintf(stderr, "Client ID assigned by server: %u\n", client->id);
+
+	if (recv_res < 0) {
+		fprintf(stderr, "myclient ~ start_handshake(): failed to recv server handshake response.\n");
+		return -1;
+	}
+
+	if (send_ack_pkt(client, client->id) < 0) {
+		fprintf(stderr, "myclient ~ start_handshake(): failed to send handshake ACK to server.\n");
+		return -1;
+	}
+
+	client->start_sn = (client->id + 1) % client->pkt_count;
+	printf("handshake completed? start_sn set to %u\n", client->start_sn);
+
+	return 0;
+}
+
+int finish_handshake(struct client *client) {
+	if (client == NULL) {
+		fprintf(stderr, "myclient ~ finish_handshake(): cannot finish handshake with NULL client ptr.\n");
+		return -1;
+	}
+
+	if (client->last_ackd_sn == client->id) {
+		if (send_ack_pkt(client, client->id) < 0) {
+			fprintf(stderr, "myclient ~ send_file(): failed to resend handshake ACK.\n");
+			return -1;
+		}
+
+		client->handshake_retransmits ++;
+		if (client->handshake_retransmits > 3) {
+			fprintf(stderr, "Reached max re-transmission limit\n");
+			exit(4);
+		}
+
+		return 1;
+	} else {
+		client->handshake_confirmed = true;
+
+		fprintf(stderr, "Connection confirmed by server.\n");
+	}
+
+	return 0;
+}
+
 // send file from fd to sockfd, also using sockaddr
 // return 0 on success, -1 on error
 // int send_file(int infd, const char *outfile_path, int sockfd, struct sockaddr *sockaddr, socklen_t *sockaddr_size, int mss, u_int32_t winsz) {
@@ -265,88 +344,13 @@ int send_file(struct client *client) {
 	return 0;
 }
 
-// TODO: don't log handshake ACK?
-
-// initiate handshake with server, which should respond with the client id
-// client id value is put in *client_id
-// return 0 on success, -1 on error
-// int start_handshake(int sockfd, const char *outfile_path, struct sockaddr *sockaddr, socklen_t *sockaddr_size, u_int32_t *client_id, u_int32_t winsz) {
-int start_handshake(struct client *client) {
-	if (client == NULL) {
-		fprintf(stderr, "myclient ~ start_handshake(): cannot perform handshake with NULL client ptr.\n");
-		return -1;
-	}
-
-	int recv_res = 1;
-	int retransmits = -1;
-
-	do {
-		fprintf(stderr, "Initial write request packet sent.\n");
-
-		retransmits ++;
-
-		if (retransmits > 3) {
-			fprintf(stderr, "Reached max re-transmission limit\n");
-			exit(4);
-		}
-
-		if (send_wr_pkt(client) < 0) {
-			fprintf(stderr, "myclient ~ start_handshake(): failed to send WR pkt to server.\n");
-			return -1;
-		}
-	} while ((recv_res = recv_server_response(client)) == 1);
-
-	client->id = client->last_ackd_sn;
-
-	fprintf(stderr, "Client ID assigned by server: %u\n", client->id);
-
-	if (recv_res < 0) {
-		fprintf(stderr, "myclient ~ start_handshake(): failed to recv server handshake response.\n");
-		return -1;
-	}
-
-	if (send_ack_pkt(client, client->id) < 0) {
-		fprintf(stderr, "myclient ~ start_handshake(): failed to send handshake ACK to server.\n");
-		return -1;
-	}
-
-	client->start_sn = (client->id + 1) % client->pkt_count;
-
-	return 0;
-}
-
-int finish_handshake(struct client *client) {
-	if (client == NULL) {
-		fprintf(stderr, "myclient ~ finish_handshake(): cannot finish handshake with NULL client ptr.\n");
-		return -1;
-	}
-
-	if (client->last_ackd_sn == client->id) {
-		if (send_ack_pkt(client, client->id) < 0) {
-			fprintf(stderr, "myclient ~ send_file(): failed to resend handshake ACK.\n");
-			return -1;
-		}
-
-		client->handshake_retransmits ++;
-		if (client->handshake_retransmits > 3) {
-			fprintf(stderr, "Reached max re-transmission limit\n");
-			exit(4);
-		}
-
-		return 1;
-	} else {
-		client->handshake_confirmed = true;
-
-		fprintf(stderr, "Connection confirmed by server.\n");
-	}
-
-	return 0;
-}
-
 // send window of pkts with content from infd
 // returns number of pkts sent, -1 on error
 int send_window_pkts(struct client *client) {
 	char pkt_buf[client->mss];
+
+	client->start_sn = (client->last_ackd_sn + 1) % client->pkt_count;
+	client->last_sent_sn = (client->start_sn + client->pkt_count - 1) % client->pkt_count;
 
 	// reset pkt info array
 	if (update_pkt_info(client) < 0) {
@@ -369,6 +373,8 @@ int send_window_pkts(struct client *client) {
 	u_int32_t sn = client->start_sn;
 	int pkts_sent = 0;
 	int bytes_read;
+
+	printf("send_window_pkts(): start sn is %u\n", sn);
 
 	while ((u_int32_t)pkts_sent < client->winsz && !eof_reached) { // only send max winsz packets
 		memset(pkt_buf, 0, sizeof(pkt_buf));
@@ -395,6 +401,8 @@ int send_window_pkts(struct client *client) {
 			fprintf(stderr, "myclient ~ send_window_pkts(): failed to send DATA pkt to server.\n");
 			return -1;
 		}
+
+		sn = (sn + 1) % client->pkt_count;
 
 		pkts_sent ++;
 	}
@@ -429,7 +437,7 @@ int send_pkt(struct client *client, int opcode, char *pkt_buf, size_t pkt_size) 
 		return -1;
 	}
 
-	if (log_pkt(client, pkt_buf) < 0) { // TODO: fix
+	if (log_pkt_sent(client, pkt_buf) < 0) { // TODO: fix
 		fprintf(stderr, "myclient ~ send_pkt(): failed to log pkt sent.\n");
 		return -1;
 	}
@@ -481,6 +489,8 @@ int send_ack_pkt(struct client *client, u_int32_t ack_sn) {
 		return -1;
 	}
 
+	client->last_sent_sn = ack_sn;
+
 	return 0;
 }
 
@@ -491,7 +501,6 @@ int send_data_pkt(struct client *client, char *pkt_buf, size_t pkt_size, u_int32
 	}
 
 	u_int32_t sn = (client->last_sent_sn + 1) % client->pkt_count;
-	client->last_sent_sn = sn;
 
 	// assign client ID
 	if (assign_pkt_client_id(pkt_buf, client->id) < 0) {
@@ -515,6 +524,8 @@ int send_data_pkt(struct client *client, char *pkt_buf, size_t pkt_size, u_int32
 		fprintf(stderr, "myclient ~ send_data_pkt(): failed to send DATA pkt to server.\n");
 		return -1;
 	}
+
+	client->last_sent_sn = sn;
 
 	return 0;
 }
@@ -594,7 +605,7 @@ int recv_server_response(struct client *client) {
 					break;
 			};
 
-			if (log_pkt(client, pkt_buf) < 0) {
+			if (log_pkt_recvd(client, pkt_buf) < 0) {
 				fprintf(stderr, "myclient ~ send_window_pkts(): encountered error logging pkt info.\n");
 				return -1;
 			}
@@ -614,7 +625,46 @@ int recv_server_response(struct client *client) {
 
 // prints log message of pkt
 // returns 0 on success, -1 on error
-int log_pkt(struct client *client, char *pkt_buf) {
+int log_pkt_sent(struct client *client, char *pkt_buf) {
+	time_t t = time(NULL);
+	struct tm *tm = gmtime(&t);
+
+	u_int32_t opcode = get_pkt_opcode(pkt_buf);
+	if (opcode == 0) {
+		fprintf(stderr, "myclient ~ log_pkt(): encountered error getting opcode from pkt.\n");
+		return -1;
+	}
+
+	if (opcode < OP_WR || opcode > OP_DATA) {
+		fprintf(stderr, "myclient ~ log_pkt(): opcode %u is not supported by server.\n", opcode);
+		return -1;
+	}
+
+	char *opstring = opcode == OP_DATA ? "DATA" : "CTRL";
+
+	u_int32_t sn = opcode == OP_WR ? get_wr_sn(pkt_buf) : (opcode == OP_ACK ? get_ack_sn(pkt_buf) : get_data_sn(pkt_buf));
+	if (sn == 0 && errno == 1) {
+		fprintf(stderr, "myclient ~ log_pkt(): encountered an error getting pkt sn from pkt.\n");
+		return -1;
+	}
+
+	printf("(sent) %d-%02d-%02dT%02d:%02d:%02dZ, %s, %u, %u, %u, %u\n",	tm->tm_year + 1900,
+																	tm->tm_mon + 1,
+																	tm->tm_mday,
+																	tm->tm_hour,
+																	tm->tm_min,
+																	tm->tm_sec,
+																	opstring,
+																	sn,
+																	client->start_sn,
+																	(sn + 1) % client->pkt_count,
+																	(client->start_sn + client->winsz) % (client->pkt_count));
+	// fflush(stdout);
+
+	return 0;
+}
+
+int log_pkt_recvd(struct client *client, char *pkt_buf) {
 	time_t t = time(NULL);
 	struct tm *tm = gmtime(&t);
 
@@ -637,7 +687,7 @@ int log_pkt(struct client *client, char *pkt_buf) {
 		return -1;
 	}
 
-	printf("%d-%02d-%02dT%02d:%02d:%02dZ, %s, %u, %u, %u, %u\n",	tm->tm_year + 1900,
+	printf("(recvd) %d-%02d-%02dT%02d:%02d:%02dZ, %s, %u, %u, %u, %u\n",	tm->tm_year + 1900,
 																	tm->tm_mon + 1,
 																	tm->tm_mday,
 																	tm->tm_hour,
