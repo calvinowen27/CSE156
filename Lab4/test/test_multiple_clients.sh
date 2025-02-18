@@ -61,4 +61,4 @@ echo "~~~~~~~~~~~~~~~~~~~~~~~
 kill -9 $server_pid
 wait $server_pid &>/dev/null
 
-rm -rf out/ diff1 diff2 diff3
+# rm -rf out/ diff1 diff2 diff3

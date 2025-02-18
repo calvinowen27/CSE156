@@ -222,13 +222,15 @@ int run(struct server *server) {
 			memset(pkt_buf, 0, BUFFER_SIZE);
 		} else if (recv_res == 2) {
 			// select timeout, send ACKs
-			printf("sending ACKs\n");
+			// printf("sending ACKs\n");
 			struct client_info *client;
 			for (u_int32_t i = 0; i < server->max_client_count; i++) {
 				client = &server->clients[i];
 				if (!client->is_active) {
 					continue;
 				}
+
+				client->ack_sent = false;
 
 				if (send_client_ack(server, client) < 0) {
 					fprintf(stderr, "myserver ~ run(): encountered error while sending ack to client.\n");
@@ -277,10 +279,12 @@ int send_client_ack(struct server *server, struct client_info *client) {
 // send ack to client with given sn
 // return 0 on success, -1 on error
 int send_client_ack_sn(struct server *server, struct client_info *client, u_int32_t ack_sn) {
+	if (client->ack_sent) return 0;
+
 	char ack_buf[5];
 	ack_buf[0] = OP_ACK;
 
-	printf("sending ACK %u\n", ack_sn);
+	// printf("sending ACK %u\n", ack_sn);
 
 	if (assign_ack_sn(ack_buf, ack_sn) < 0) {
 		fprintf(stderr, "myserver ~ send_client_ack_sn(): encountered an error assigning ACK sn %u to client %u ACK.\n", ack_sn, client->id);
@@ -447,7 +451,7 @@ int process_write_req(struct server *server, char *pkt_buf) {
 		return -1;
 	}
 
-	printf("sent client ID: %u\n", client->id);
+	// printf("sent client ID: %u\n", client->id);
 
 	client->handshaking = true;
 
@@ -518,16 +522,16 @@ int process_data_pkt(struct server *server, char *pkt_buf) {
 	// }
 
 	if (pkt_sn != client->expected_sn && (pkt_sn + client->pkt_count - client->expected_start_sn) % client->pkt_count < (client->expected_sn + client->pkt_count - client->expected_start_sn) % client->pkt_count) {
-		printf("turn away %u (already seen)\n", pkt_sn);
+		// printf("turn away %u (already seen)\n", pkt_sn);
 		return 0;
 	}
 
 	if (pkt->written && pkt->ackd) {
-		printf("turn away %u (written and ackd)\n", pkt_sn);
+		// printf("turn away %u (written and ackd)\n", pkt_sn);
 		return 0;
 	}
 
-	printf("recv DATA %u\n", pkt_sn);
+	// printf("recv DATA %u\n", pkt_sn);
 
 	// get payload size, terminate client connection if == 0
 	u_int32_t pyld_sz = get_data_pyld_sz(pkt_buf);
