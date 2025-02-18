@@ -15,11 +15,12 @@ struct server {
 	int pkts_sent;
 	struct client_info *clients;
 	u_int32_t max_client_count;
+	const char *root_folder_path;
 };
 
 // initialize server info with port and droppc, init socket and clients
 // returns pointer to server struct on success, NULL on failure
-struct server *init_server(int port, int droppc);
+struct server *init_server(int port, int droppc, const char *root_folder_path);
 
 // free allocated memory for server, terminate clients, and close socket
 void close_server(struct server **server);

@@ -22,8 +22,8 @@
 
 int main(int argc, char **argv) {
 	// handle command line args
-	if (argc != 3) {
-		printf("Invalid number of options provided.\nThis is where I will print the usage of the program.\n");
+	if (argc != 4) {
+		printf("Invalid number of options provided.\n");
 		exit(1);
 	}
 
@@ -39,9 +39,29 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 
+	char *root_folder_path = argv[3];
+	bool rfp_terminated = root_folder_path[strlen(root_folder_path) - 1] == '/';
+	if (!rfp_terminated) {
+		fprintf(stderr, "rfp not terminated.\n");
+		char *path = root_folder_path;
+		root_folder_path = calloc(strlen(path) + 2, sizeof(char));
+		if (root_folder_path == NULL) {
+			fprintf(stderr, "myserver ~ main(): failed to allocate memory for root_folder_path.\n");
+			exit(1);
+		}
+		memcpy(root_folder_path, path, strlen(path));
+		root_folder_path[strlen(path)] = '/';
+		fprintf(stderr, "new rfp: %s\n", root_folder_path);
+	}
+
+	if (create_file_directory(root_folder_path) < 0) {
+		fprintf(stderr, "myserver ~ main(): failed to create directories for path %s.\n", root_folder_path);
+		exit(1);
+	}
+
 	// initialize server socket
 
-	struct server *server = init_server(port, droppc);
+	struct server *server = init_server(port, droppc, root_folder_path);
 	if (server == NULL) {
 		fprintf(stderr, "myserver ~ main(): encountered error initializing server state.\n");
 		exit(1); // TODO
@@ -55,6 +75,8 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 
+	if (!rfp_terminated) free(root_folder_path);
+
 	close_server(&server);
 
 	return 0;
@@ -62,7 +84,7 @@ int main(int argc, char **argv) {
 
 // initialize server info with port and droppc, init socket and clients
 // returns pointer to server struct on success, NULL on failure
-struct server *init_server(int port, int droppc) {
+struct server *init_server(int port, int droppc, const char *root_folder_path) {
 	struct server *server = malloc(sizeof(struct server));
 
 	server->sockfd = init_socket((struct sockaddr_in *)&server->serveraddr, NULL, port, AF_INET, SOCK_DGRAM, IPPROTO_UDP, true);
@@ -85,6 +107,8 @@ struct server *init_server(int port, int droppc) {
 		fprintf(stderr, "myserver ~ init_server(): encountered error initializing clients.\n");
 		return NULL;
 	}
+
+	server->root_folder_path = root_folder_path;
 
 	// server->next_client_id = 1;
 
@@ -123,6 +147,20 @@ struct client_info *find_new_client(struct server *server, char *outfile_path, u
 		fprintf(stderr, "myserver ~ find_new_client(): NULL ptr passed to outfile_path parameter.\n");
 		return NULL;
 	}
+
+	// construct new file path with server root folder path attached
+	// bool rfp_terminated = server->root_folder_path[strlen(server->root_folder_path)] == '/';
+	// char new_file_path[strlen(server->root_folder_path) + (rfp_terminated ? 0 : 1) + strlen(outfile_path) + 1];
+	// if (!rfp_terminated) {
+	// 	new_file_path[strlen(server->root_folder_path)] = '/';
+	// }
+
+	char new_file_path[strlen(server->root_folder_path) + strlen(outfile_path) + 1];
+	new_file_path[sizeof(new_file_path) - 1] = 0; // null terminate
+	memcpy(new_file_path, server->root_folder_path, strlen(server->root_folder_path));
+	memcpy(new_file_path + strlen(server->root_folder_path), outfile_path, strlen(outfile_path));
+
+	fprintf(stderr, "init client w path: %s\n", new_file_path);
 	
 	// find first inactive client slot in clients
 	bool inactive_client_found = false;
@@ -132,7 +170,7 @@ struct client_info *find_new_client(struct server *server, char *outfile_path, u
 		client = &server->clients[id - 1];
 		if (!client->is_active && !client->handshaking) {
 			inactive_client_found = true;
-			if (client_info_init(client, id, outfile_path, server->clientaddr, winsz) < 0) {
+			if (client_info_init(client, id, new_file_path, server->clientaddr, winsz) < 0) {
 				fprintf(stderr, "myserver ~ accept_client(): encountered error while initializing client_info.\n");
 				return NULL;
 			}
@@ -151,7 +189,7 @@ struct client_info *find_new_client(struct server *server, char *outfile_path, u
 		}
 
 		client = &server->clients[id - 1];
-		if (client_info_init(client, id, outfile_path, server->clientaddr, winsz) < 0) {
+		if (client_info_init(client, id, new_file_path, server->clientaddr, winsz) < 0) {
 			fprintf(stderr, "myserver ~ accept_client(): encountered error while initializing client_info.\n");
 			return NULL;
 		}
@@ -190,7 +228,7 @@ int terminate_client(struct server *server, u_int32_t client_id) {
 		// reset values and free allocated memory
 		client->is_active = false;
 		free(client->pkt_info);
-		free(client->outfile_path);
+		// free(client->outfile_path);
 		close(client->outfd);
 	} else {
 		fprintf(stderr, "myserver ~ terminate_client(): cannot terminate inactive client %u.\n", client_id);
@@ -435,7 +473,9 @@ int process_write_req(struct server *server, char *pkt_buf) {
 	}
 
 	// create outfile path, starting at byte 1 of pkt_buf (byte 0 is opcode)
-	char *outfile_path = calloc(strlen(pkt_buf + WR_HEADER_SIZE) + 1, sizeof(char));
+	// char *outfile_path = calloc(strlen(pkt_buf + WR_HEADER_SIZE) + 1, sizeof(char));
+	char outfile_path[strlen(pkt_buf + WR_HEADER_SIZE) + 1];
+	outfile_path[sizeof(outfile_path) - 1] = 0; // null terminate
 	memcpy(outfile_path, pkt_buf + WR_HEADER_SIZE, strlen(pkt_buf + WR_HEADER_SIZE));
 
 	// accept client, initializing all client_info data and opening outfile for writing
