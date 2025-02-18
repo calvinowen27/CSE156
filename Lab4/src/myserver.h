@@ -27,7 +27,9 @@ void close_server(struct server **server);
 // accept new client with id client_id writing to file outfile_path
 // open outfile and add client to clients with outfd
 // return client_info ptr on success, NULL on failure
-struct client_info *accept_client(struct server *server, char *outfile_path, u_int32_t winsz);
+struct client_info *find_new_client(struct server *server, char *outfile_path, u_int32_t winsz);
+
+int accept_client(struct client_info *client);
 
 // terminate connection with client with id client_id and free necessary memory
 // close outfile and set client inactive

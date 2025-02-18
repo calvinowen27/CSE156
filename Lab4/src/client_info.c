@@ -134,7 +134,7 @@ int client_info_init(struct client_info *client, u_int32_t client_id, char *outf
 	int outfd = open(outfile_path, O_CREAT | O_TRUNC | O_RDWR, 0664);
 
 	// set client_info values
-	client->is_active = true;
+	client->is_active = false;
 	client->id = client_id;
 	client->expected_sn = client_id;
 	client->outfd = outfd;

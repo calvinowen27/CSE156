@@ -11,6 +11,7 @@
 #include <time.h>
 #include <stdint.h>
 #include <math.h>
+#include <poll.h>
 
 #include "myserver.h"
 #include "utils.h"
@@ -112,14 +113,14 @@ void close_server(struct server **server) {
 // accept new client with id client_id writing to file outfile_path
 // open outfile and add client to clients with outfd
 // return client_info ptr on success, NULL on failure
-struct client_info *accept_client(struct server *server, char *outfile_path, u_int32_t winsz) {
+struct client_info *find_new_client(struct server *server, char *outfile_path, u_int32_t winsz) {
 	if (server == NULL) {
-		fprintf(stderr, "myserver ~ accept_client(): NULL ptr passed to server parameter.\n");
+		fprintf(stderr, "myserver ~ find_new_client(): NULL ptr passed to server parameter.\n");
 		return NULL;
 	}
 
 	if (outfile_path == NULL) {
-		fprintf(stderr, "myserver ~ accept_client(): NULL ptr passed to outfile_path parameter.\n");
+		fprintf(stderr, "myserver ~ find_new_client(): NULL ptr passed to outfile_path parameter.\n");
 		return NULL;
 	}
 	
@@ -129,7 +130,7 @@ struct client_info *accept_client(struct server *server, char *outfile_path, u_i
 	struct client_info *client;
 	for (u_int32_t id = 1; id <= server->max_client_count; id++) {
 		client = &server->clients[id - 1];
-		if (!client->is_active) {
+		if (!client->is_active && !client->handshaking) {
 			inactive_client_found = true;
 			if (client_info_init(client, id, outfile_path, server->clientaddr, winsz) < 0) {
 				fprintf(stderr, "myserver ~ accept_client(): encountered error while initializing client_info.\n");
@@ -157,6 +158,17 @@ struct client_info *accept_client(struct server *server, char *outfile_path, u_i
 	}
 
 	return client;
+}
+int accept_client(struct client_info *client) {
+	if (client == NULL) {
+		fprintf(stderr, "myserver ~ find_new_client(): NULL ptr passed to client parameter.\n");
+		return -1;
+	}
+
+	client->is_active = true;
+	client->handshaking = false;
+
+	return 0;
 }
 
 // terminate connection with client with id client_id and free necessary memory
@@ -210,6 +222,7 @@ int run(struct server *server) {
 			memset(pkt_buf, 0, BUFFER_SIZE);
 		} else if (recv_res == 2) {
 			// select timeout, send ACKs
+			printf("sending ACKs\n");
 			struct client_info *client;
 			for (u_int32_t i = 0; i < server->max_client_count; i++) {
 				client = &server->clients[i];
@@ -267,6 +280,8 @@ int send_client_ack_sn(struct server *server, struct client_info *client, u_int3
 	char ack_buf[5];
 	ack_buf[0] = OP_ACK;
 
+	printf("sending ACK %u\n", ack_sn);
+
 	if (assign_ack_sn(ack_buf, ack_sn) < 0) {
 		fprintf(stderr, "myserver ~ send_client_ack_sn(): encountered an error assigning ACK sn %u to client %u ACK.\n", ack_sn, client->id);
 		return -1;
@@ -292,22 +307,22 @@ int send_client_ack_sn(struct server *server, struct client_info *client, u_int3
 // update ack and written status of pkts when ack is sent
 // return 0 on success, -1 on failure
 int update_pkt_info(struct client_info *client) {
-	if (client == NULL || !client->is_active) {
+	if (client == NULL || (!client->is_active && !client->handshaking)) {
 		fprintf(stderr, "myserver ~ update_pkt_info(): can't update pkt info for inactive client.\n");
 		return -1;
 	}
 
-	u_int32_t sn = (client->expected_start_sn + 1) % client->pkt_count, pkts = 0;
+	if (client->ack_sent) return (client->expected_start_sn + client->pkt_count - 1) % client->pkt_count;
+
+	u_int32_t sn = client->expected_start_sn, pkts = 0;
 	struct s_pkt_info *pkt;
 	while (pkts < client->winsz) {
 		pkt = &client->pkt_info[sn];
 
-		if (!pkt->written) break;
+		pkt->ackd = pkt->written;
 
-		pkt->ackd = true;
-		pkt->written = false;
-
-		client->pkt_info[sn].ackd = false;
+		client->pkt_info[(sn + client->winsz) % client->pkt_count].ackd = false;
+		client->pkt_info[(sn + client->winsz) % client->pkt_count].written = false;
 
 		sn = (sn + 1) % client->pkt_count;
 		pkts ++;
@@ -324,7 +339,6 @@ u_int32_t get_client_ack_sn(struct client_info *client) {
 
 	// find first unackd pkt
 	u_int32_t pkts_counted = 0;
-	first_unwritten_sn = client->expected_start_sn;
 	struct s_pkt_info *pkt;
 	while (pkts_counted < client->winsz) {
 		pkt = &client->pkt_info[first_unwritten_sn];
@@ -333,20 +347,10 @@ u_int32_t get_client_ack_sn(struct client_info *client) {
 			break;
 		}
 
-		pkt->written = false;
-		pkt->ackd = true;
-
-		client->pkt_info[(first_unwritten_sn + client->winsz) % client->pkt_count].ackd = false;
-		
 		first_unwritten_sn = (first_unwritten_sn + 1) % client->pkt_count;
 
 		pkts_counted ++;
 	}
-
-	client->expected_start_sn = first_unwritten_sn;
-
-	// next expected is first unackd
-	client->expected_sn = client->expected_start_sn;
 
 	return (first_unwritten_sn + client->pkt_count - 1) % client->pkt_count;
 }
@@ -360,11 +364,10 @@ int recv_pkt(struct server *server, char *pkt_buf) {
 
 	struct timeval timeout = { LOSS_TIMEOUT_SECS, 0 };
 
-	if (select(server->sockfd + 1, &fds, NULL, NULL, &timeout) > 0) { // check there is data to be read from socket
+	if (select(server->sockfd + 1, &fds, NULL, NULL, &timeout) > 0 && FD_ISSET(server->sockfd, &fds)) { // check there is data to be read from socket
 		// data available at socket
 		// read into buffer
 		if (recvfrom(server->sockfd, pkt_buf, BUFFER_SIZE, 0, &server->clientaddr, &server->clientaddr_size) >= 0) {
-
 			// pkt dropped
 			if (drop_pkt(pkt_buf, &server->pkts_recvd, server->droppc)) {
 				return 0;
@@ -432,7 +435,7 @@ int process_write_req(struct server *server, char *pkt_buf) {
 	memcpy(outfile_path, pkt_buf + WR_HEADER_SIZE, strlen(pkt_buf + WR_HEADER_SIZE));
 
 	// accept client, initializing all client_info data and opening outfile for writing
-	struct client_info *client = accept_client(server, outfile_path, winsz);
+	struct client_info *client = find_new_client(server, outfile_path, winsz);
 	if (client == NULL) {
 		fprintf(stderr, "myserver ~ process_write_req(): encountered error while accepting client.\n");
 		return -1;
@@ -443,6 +446,8 @@ int process_write_req(struct server *server, char *pkt_buf) {
 		fprintf(stderr, "myserver ~ process_write_req(): encountered error sending ACK with client id %u to accept client.\n", client->id);
 		return -1;
 	}
+
+	printf("sent client ID: %u\n", client->id);
 
 	client->handshaking = true;
 
@@ -507,6 +512,23 @@ int process_data_pkt(struct server *server, char *pkt_buf) {
 
 	struct s_pkt_info *pkt = &client->pkt_info[pkt_sn];
 
+	// if (client->ack_sent && pkt_sn != client->expected_sn) {
+	// 	printf("turn away %u (already ackd)\n", pkt_sn);
+	// 	return 0;
+	// }
+
+	if (pkt_sn != client->expected_sn && (pkt_sn + client->pkt_count - client->expected_start_sn) % client->pkt_count < (client->expected_sn + client->pkt_count - client->expected_start_sn) % client->pkt_count) {
+		printf("turn away %u (already seen)\n", pkt_sn);
+		return 0;
+	}
+
+	if (pkt->written && pkt->ackd) {
+		printf("turn away %u (written and ackd)\n", pkt_sn);
+		return 0;
+	}
+
+	printf("recv DATA %u\n", pkt_sn);
+
 	// get payload size, terminate client connection if == 0
 	u_int32_t pyld_sz = get_data_pyld_sz(pkt_buf);
 	if (pyld_sz == 0 && errno == 1) {
@@ -553,6 +575,8 @@ int process_data_pkt(struct server *server, char *pkt_buf) {
 			fprintf(stderr, "myserver ~ process_data_pkt(): encountered error sending ack to client.\n");
 			return -1;
 		}
+
+		return 0;
 	}
 
 	// check if last pkt for fast ACK, instead of waiting for timeout
@@ -591,8 +615,8 @@ int process_ack_pkt(struct server *server, char *pkt_buf) {
 	}
 
 	struct client_info *client = &server->clients[client_id - 1];
-	if (client == NULL || !client->is_active) {
-		fprintf(stderr, "myserver ~ process_ack_pkt(): cannot process ack for inactive client %u.\n", client_id);
+	if (client == NULL) {
+		fprintf(stderr, "myserver ~ process_ack_pkt(): cannot process ack for NULL client %u.\n", client_id);
 		return -1;
 	}
 
@@ -602,7 +626,10 @@ int process_ack_pkt(struct server *server, char *pkt_buf) {
 			return -1;
 		}
 	} else if (client->handshaking) {
-		client->handshaking = false;
+		if (accept_client(client) < 0) {
+			fprintf(stderr, "myserver ~ process_ack_pkt(): failed to accept client %u\n", client_id);
+			return -1;
+		}
 	}
 
 	return 0;
@@ -613,6 +640,7 @@ int process_ack_pkt(struct server *server, char *pkt_buf) {
 // determines wether to drop a pkt based on pkt_count
 // prints log message if pkt is dropped
 // returns 1 if true, 0 if false
+// int drops = 0;
 int drop_pkt(char *pkt_buf, int *pkt_count, int droppc) {
 
 	int every = 100 / droppc;
@@ -624,6 +652,10 @@ int drop_pkt(char *pkt_buf, int *pkt_count, int droppc) {
 	}
 
 	(*pkt_count) ++;
+
+	// drops ++;
+
+	// printf("DROP RATE %f\n", (float)drops/(float)(*pkt_count));
 
 	time_t t = time(NULL);
 	struct tm *tm = gmtime(&t);
