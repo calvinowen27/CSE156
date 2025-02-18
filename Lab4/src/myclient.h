@@ -8,9 +8,16 @@ struct c_pkt_info {
 	bool active;
 };
 
+struct server_info {
+	const char *ip;
+	int port;
+};
+
 struct client {
 	int infd;
 	int sockfd;
+
+	struct server_info server;
 
 	const char *outfile_path;
 
@@ -34,7 +41,7 @@ struct client {
 
 // initialize client with relevant information, perform handshake with server
 // return pointer to client struct on success, NULL on failure
-struct client *init_client(const char *infile_path, const char *outfile_path, const char *server_ip, int server_port, int mss, u_int32_t winsz);
+struct client *init_client(const char *infile_path, const char *outfile_path, struct server_info server, int mss, u_int32_t winsz);
 
 // free all memory allocated in client and close infd and sockfd
 void free_client(struct client **client);
@@ -74,5 +81,7 @@ int recv_server_response(struct client *client);
 int log_pkt_sent(struct client *client, char *pkt_buf);
 
 int log_pkt_recvd(struct client *client, char *pkt_buf);
+
+struct server_info *parse_serv_conf(const char *serv_conf_path, int servn);
 
 #endif

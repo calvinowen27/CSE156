@@ -26,12 +26,13 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 
-	char *server_ip = argv[1];																// server ip
-	int server_port = atoi(argv[2]);														// server port
-	if (server_port < 0 || server_port > 65535) {
-		printf("Invalid port provided. Please provide a server port between 0-65535.\n");
+	int servn = atoi(argv[1]);																// servn
+	if (servn <= 0 || servn > 65535) {
+		printf("Invalid servn provided. Please provide a server count between 1-65535.\n");
 		exit(1);
 	}
+
+	char *servaddr_conf = argv[2];														// servaddr config file
 
 	int mss = atoi(argv[3]);																// mss
 	// check for valid mss size
@@ -66,29 +67,46 @@ int main(int argc, char **argv) {
 		printf("outfile path name cannot exceed 4096 characters.\n");
 		exit(1);
 	}
-	
-	struct client *client = init_client(infile_path, outfile_path, server_ip, server_port, mss, winsz);
-	if (client == NULL) {
-		fprintf(stderr, "myclient ~ main(): encountered error initialize client.\n");
-		exit(1); // TODO: different for multiple threads? etc.
-	}
 
-	// send in file to server
-	if (send_file(client) < 0) {
-		fprintf(stderr, "myclient ~ main(): failed to send or receive file %s to server.\n", infile_path);
+	struct client *clients[servn];
+	struct server_info *servers = parse_serv_conf(servaddr_conf, servn);
+	if (servers == NULL) {
+		fprintf(stderr, "myclient ~ main(): failed to parse servaddr_conf file: %s.\n", servaddr_conf);
 		exit(1);
 	}
 
+	for (int i = 0; i < servn; i++) {
+		clients[i] = init_client(infile_path, outfile_path, servers[i], mss, winsz);
+		if (clients[i] == NULL) {
+			fprintf(stderr, "myclient ~ main(): encountered error initializing client %d\n", i);
+			exit(1); // TODO: different for multiple threads? etc.
+		}
+		printf("client %d server:\n\tip: %s\n\tport: %d\n", i, clients[i]->server.ip, clients[i]->server.port);
+		free(clients[i]);
+	}
+	
+	// struct client *client = init_client(infile_path, outfile_path, server, mss, winsz);
+	// if (client == NULL) {
+	// 	fprintf(stderr, "myclient ~ main(): encountered error initializing client.\n");
+	// 	exit(1); // TODO: different for multiple threads? etc.
+	// }
+
+	// send in file to server
+	// if (send_file(client) < 0) {
+	// 	fprintf(stderr, "myclient ~ main(): failed to send or receive file %s to server.\n", infile_path);
+	// 	exit(1);
+	// }
+
 	// TODO: make sure all exit codes match spec
 
-	free_client(&client);
+	// free_client(&client);
 
 	return 0;
 }
 
 // initialize client with relevant information, perform handshake with server
 // return pointer to client struct on success, NULL on failure
-struct client *init_client(const char *infile_path, const char *outfile_path, const char *server_ip, int server_port, int mss, u_int32_t winsz) {
+struct client *init_client(const char *infile_path, const char *outfile_path, struct server_info server, int mss, u_int32_t winsz) {
 	// check for NULL args
 	if (infile_path == NULL) {
 		fprintf(stderr, "myclient ~ init_client(): cannot initialize client with NULL infile_path ptr.\n");
@@ -100,8 +118,8 @@ struct client *init_client(const char *infile_path, const char *outfile_path, co
 		return NULL;
 	}
 
-	if (server_ip == NULL) {
-		fprintf(stderr, "myclient ~ init_client(): cannot initialize client with NULL server_ip ptr.\n");
+	if (server.ip == NULL) {
+		fprintf(stderr, "myclient ~ init_client(): cannot initialize client with NULL server ip ptr.\n");
 		return NULL;
 	}
 	
@@ -123,10 +141,12 @@ struct client *init_client(const char *infile_path, const char *outfile_path, co
 	// save outfile path
 	client->outfile_path = outfile_path;
 
+	client->server = server;
+
 	// init socket info
 	client->serveraddr_size = sizeof(client->serveraddr);
 	
-	client->sockfd = init_socket((struct sockaddr_in *)&client->serveraddr, server_ip, server_port, AF_INET, SOCK_DGRAM, IPPROTO_UDP, false);
+	client->sockfd = init_socket((struct sockaddr_in *)&client->serveraddr, server.ip, server.port, AF_INET, SOCK_DGRAM, IPPROTO_UDP, false);
 	if (client->sockfd < 0) {
 		fprintf(stderr, "myclient ~ init_client(): failed to initialize socket.\n");
 		return NULL;
@@ -169,10 +189,10 @@ struct client *init_client(const char *infile_path, const char *outfile_path, co
 	client->handshake_retransmits = 0;
 
 	// initiate handshake with WR and outfile path
-	if (start_handshake(client) < 0) {
-		fprintf(stderr, "myclient ~ init_client(): encountered an error while performing handshake with server.\n");
-		return NULL;
-	}
+	// if (start_handshake(client) < 0) {
+	// 	fprintf(stderr, "myclient ~ init_client(): encountered an error while performing handshake with server.\n");
+	// 	return NULL;
+	// }
 
 	return client;
 }
@@ -701,4 +721,117 @@ int log_pkt_recvd(struct client *client, char *pkt_buf) {
 	// fflush(stdout);
 
 	return 0;
+}
+
+struct server_info *parse_serv_conf(const char *serv_conf_path, int servn) {
+	if (serv_conf_path == NULL) {
+		fprintf(stderr, "myclient ~ parse_serv_conf(): cannot parse file with NULL path parameter.\n");
+		return NULL;
+	}
+
+	struct server_info *servers = calloc(servn, sizeof(struct server_info));
+	if (servers == NULL) {
+		fprintf(stderr, "myclient ~ parse_serv_conf(): failed to allocate memory to server array.\n");
+		return NULL;
+	}
+
+	for (int i = 0; i < servn; i++) {
+		servers[i].ip = NULL;
+		servers[i].port = -1;
+	}
+
+	int fd = open(serv_conf_path, O_RDONLY, 0700);
+	if (fd < 0) {
+		fprintf(stderr, "myclient ~ parse_serv_conf(): failed to open file %s\n", serv_conf_path);
+		free(servers);
+		return NULL;
+	}
+
+	char *line, *part, *line_ref, *part_ref;
+	char line_buf[65];
+	line_buf[sizeof(line_buf) - 1] = 0;
+
+	off_t file_idx = 0;
+
+	bool comment_line = false, new_buf = false;
+
+	int serv_idx = 0;
+
+	int read_res;
+	while ((read_res = read(fd, line_buf, sizeof(line_buf) - 1)) > 0) {
+		// printf("buf: %s\n", line_buf);
+		new_buf = true;
+
+		for (line = strtok_r(line_buf, "\n", &line_ref); line; line = strtok_r(NULL, "\n", &line_ref)) {
+			// printf("line: %s (%lu)\n", line, strlen(line));
+			file_idx += strlen(line);
+
+			if (comment_line) {
+				comment_line = new_buf;
+				new_buf = false;
+				if (!comment_line) {
+					// printf("(comment over)");
+				} else {
+					// printf("\n");
+					continue;
+				}	
+			}
+
+			// if already reading comment line but next line not NULL, reset
+			// if (!comment_line) {
+			// 	printf("(end of comment line)\n");
+			// 	comment_line = false;
+			// 	continue;
+			// }
+
+			// line starts with # --> comment, skip
+			if (line[0] == '#') {
+				// printf("(start of comment line)\n");
+				comment_line = true;
+				continue;
+			}
+
+			// printf("\n");
+
+			for (part = strtok_r(line, " ", &part_ref); part; part = strtok_r(NULL, "\n", &part_ref)) {
+				// printf("\tpart: %s\n", part);
+				if (servers[serv_idx].ip == NULL) {
+					// printf("creating ip\n");
+					servers[serv_idx].ip = calloc(strlen(part) + 1, sizeof(char));
+					if (servers[serv_idx].ip == NULL) {
+						fprintf(stderr, "myclient ~ parse_serv_conf(): failed to allocate memory for server %d ip.\n", serv_idx);
+						// TODO: free stuff?
+						return NULL;
+					}
+					memcpy((void *)servers[serv_idx].ip, part, strlen(part));
+					// printf("ip: %s\n", servers[serv_idx].ip);
+				} else if (servers[serv_idx].port == -1) {
+					// printf("creating port\n");
+					servers[serv_idx].port = atoi(part);
+					if (servers[serv_idx].port < 0 || servers[serv_idx].port > 65535) {
+						fprintf(stderr, "myclient ~ parse_serv_conf(): invalid port provided in config file: %s\n", part);
+						// TODO: free stuff?
+						return NULL;
+					}
+					serv_idx ++;
+				}
+			}
+
+			file_idx += 1;
+		}
+
+		lseek(fd, file_idx, SEEK_SET);
+
+		memset(line_buf, 0, sizeof(line_buf));
+	}
+
+	if (read_res < 0) {
+		fprintf(stderr, "myclient ~ parse_serv_conf(): failed to read from file.\n");
+		free(servers);
+		return NULL;
+	}
+
+	close(fd);
+
+	return servers;
 }
