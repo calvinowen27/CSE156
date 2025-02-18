@@ -76,4 +76,4 @@ echo "~~~~~~~~~~~~~~~~~~~~~~~
 kill -9 $pid
 wait $pid &>/dev/null
 
-rm -rf diff #out/
+# rm -rf diff
