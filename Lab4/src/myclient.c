@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 #include <regex.h>
 #include <time.h>
+#include <pthread.h>
 
 #include "myclient.h"
 #include "utils.h"
@@ -68,22 +69,53 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 
-	struct client *clients[servn];
+	// struct client *clients[servn];
+	pthread_t threads[servn];
 	struct server_info *servers = parse_serv_conf(servaddr_conf, servn);
 	if (servers == NULL) {
 		fprintf(stderr, "myclient ~ main(): failed to parse servaddr_conf file: %s.\n", servaddr_conf);
 		exit(1);
 	}
 
+	pthread_mutex_t mut;
+	pthread_mutex_init(&mut, NULL);
+
 	for (int i = 0; i < servn; i++) {
-		clients[i] = init_client(infile_path, outfile_path, servers[i], mss, winsz);
-		if (clients[i] == NULL) {
-			fprintf(stderr, "myclient ~ main(): encountered error initializing client %d\n", i);
+		printf("server %i:\n\tip: %s\n\tport: %d\n", i, servers[i].ip, servers[i].port);
+		// void *args[6] = { (void *)infile_path, (void *)outfile_path, (void *)&servers[i], (void *)((intptr_t)mss), (void *)((uintptr_t)winsz), (void *)&mut };
+		
+		struct client *client = init_client(infile_path, outfile_path, servers[i], mss, winsz, &mut);
+		if (client == NULL) {
+			fprintf(stderr, "myclient ~ main(): encountered error initializing client\n");
 			exit(1); // TODO: different for multiple threads? etc.
 		}
-		printf("client %d server:\n\tip: %s\n\tport: %d\n", i, clients[i]->server.ip, clients[i]->server.port);
-		free(clients[i]);
+		
+		if (pthread_create(&threads[i], NULL, &run_client, (void *)client) < 0) {
+			fprintf(stderr, "myclient ~ main(): failed to spawn thread for client %d\n", i);
+			exit(1); // TODO: check this
+		}
+		
+		// clients[i] = init_client(infile_path, outfile_path, servers[i], mss, winsz);
+		// if (clients[i] == NULL) {
+		// 	fprintf(stderr, "myclient ~ main(): encountered error initializing client %d\n", i);
+		// 	exit(1); // TODO: different for multiple threads? etc.
+		// }
+		// printf("client %d server:\n\tip: %s\n\tport: %d\n", i, clients[i]->server.ip, clients[i]->server.port);
+		// free(clients[i]);
 	}
+
+	for (int i = 0; i < servn; i++) {
+		if (pthread_join(threads[i], NULL) < 0) {
+			fprintf(stderr, "myclient ~ main(): encountered error waiting for thread %d to join.\n", i);
+			exit(1); // TODO: check this
+		}
+
+		free(servers[i].ip);
+	}
+
+	pthread_mutex_destroy(&mut);
+
+	free(servers);
 	
 	// struct client *client = init_client(infile_path, outfile_path, server, mss, winsz);
 	// if (client == NULL) {
@@ -104,9 +136,34 @@ int main(int argc, char **argv) {
 	return 0;
 }
 
+// void *run_client(const char *infile_path, const char *outfile_path, struct server_info server, int mss, u_int32_t winsz) {
+void *run_client(void *client) {
+	// const char *infile_path = (const char *)((void **)args)[0];
+	// const char *outfile_path = (const char *)((void **)args)[1];
+	// struct server_info *server = (struct server_info *)((void **)args)[2];
+	// int mss = (int)((intptr_t)(((void **)args)[3]));
+	// u_int32_t winsz = (u_int32_t)((uintptr_t)(((void **)args)[4]));
+	// pthread_mutex_t *mut = (pthread_mutex_t *)((void **)args)[5];
+
+	// initiate handshake with WR and outfile path
+	if (start_handshake((struct client *)client) < 0) {
+		fprintf(stderr, "myclient ~ init_client(): encountered an error while performing handshake with server.\n");
+		return NULL;
+	}
+
+	if (send_file(client) < 0) {
+		fprintf(stderr, "myclient ~ run_client(): failed to send or receive file to/from server.\n");
+		exit(1);
+	}
+
+	free_client((struct client **)&client);
+
+	return NULL;
+}
+
 // initialize client with relevant information, perform handshake with server
 // return pointer to client struct on success, NULL on failure
-struct client *init_client(const char *infile_path, const char *outfile_path, struct server_info server, int mss, u_int32_t winsz) {
+struct client *init_client(const char *infile_path, const char *outfile_path, struct server_info server, int mss, u_int32_t winsz, pthread_mutex_t *mut) {
 	// check for NULL args
 	if (infile_path == NULL) {
 		fprintf(stderr, "myclient ~ init_client(): cannot initialize client with NULL infile_path ptr.\n");
@@ -142,6 +199,7 @@ struct client *init_client(const char *infile_path, const char *outfile_path, st
 	client->outfile_path = outfile_path;
 
 	client->server = server;
+	printf("init client with server %s:%d\n", client->server.ip, client->server.port);
 
 	// init socket info
 	client->serveraddr_size = sizeof(client->serveraddr);
@@ -162,6 +220,8 @@ struct client *init_client(const char *infile_path, const char *outfile_path, st
 	client->mss = mss;
 	client->winsz = winsz;
 	client->pkt_count = 2 * winsz;
+
+	client->mut = mut;
 
 	// starts at 0 (invalid), set when handshake takes place
 	client->id = 0;
@@ -452,10 +512,12 @@ int send_pkt(struct client *client, int opcode, char *pkt_buf, size_t pkt_size) 
 		return -1;
 	}
 
+	pthread_mutex_lock(client->mut);
 	if (sendto(client->sockfd, pkt_buf, pkt_size, 0, &client->serveraddr, client->serveraddr_size) < 0) {
 		fprintf(stderr, "myclient ~ send_pkt(): failed to send pkt to server: opcode %u\n", opcode);
 		return -1;
 	}
+	pthread_mutex_unlock(client->mut);
 
 	if (log_pkt_sent(client, pkt_buf) < 0) { // TODO: fix
 		fprintf(stderr, "myclient ~ send_pkt(): failed to log pkt sent.\n");
@@ -597,8 +659,10 @@ int recv_server_response(struct client *client) {
 
 	u_int32_t ack_sn;
 
+	pthread_mutex_lock(client->mut);
 	if (select(client->sockfd + 1, &fds, NULL, NULL, &timeout) > 0) { // check there is data to be read from socket
 		if ((bytes_recvd = recvfrom(client->sockfd, pkt_buf, sizeof(pkt_buf), 0, &client->serveraddr, &client->serveraddr_size)) >= 0) {			
+			pthread_mutex_unlock(client->mut);
 			// recvfrom success
 			int opcode = get_pkt_opcode(pkt_buf);
 			switch (opcode) {
@@ -630,6 +694,7 @@ int recv_server_response(struct client *client) {
 				return -1;
 			}
 		} else { // recvfrom failed
+			pthread_mutex_unlock(client->mut);
 			fprintf(stderr, "Cannot detect server.\n");
 			exit(5);
 		}
@@ -639,6 +704,8 @@ int recv_server_response(struct client *client) {
 		fprintf(stderr, "Packet Loss Detected\n");
 		return 1;
 	}
+
+	pthread_mutex_unlock(client->mut);
 
 	return 0;
 }
@@ -668,7 +735,8 @@ int log_pkt_sent(struct client *client, char *pkt_buf) {
 		return -1;
 	}
 
-	printf("(sent) %d-%02d-%02dT%02d:%02d:%02dZ, %s, %u, %u, %u, %u\n",	tm->tm_year + 1900,
+	printf("(sent: %u) %d-%02d-%02dT%02d:%02d:%02dZ, %s, %u, %u, %u, %u\n", client->id,
+																	tm->tm_year + 1900,
 																	tm->tm_mon + 1,
 																	tm->tm_mday,
 																	tm->tm_hour,
@@ -707,7 +775,8 @@ int log_pkt_recvd(struct client *client, char *pkt_buf) {
 		return -1;
 	}
 
-	printf("(recvd) %d-%02d-%02dT%02d:%02d:%02dZ, %s, %u, %u, %u, %u\n",	tm->tm_year + 1900,
+	printf("(recvd: %u) %d-%02d-%02dT%02d:%02d:%02dZ, %s, %u, %u, %u, %u\n", client->id,
+																	tm->tm_year + 1900,
 																	tm->tm_mon + 1,
 																	tm->tm_mday,
 																	tm->tm_hour,
@@ -769,13 +838,13 @@ struct server_info *parse_serv_conf(const char *serv_conf_path, int servn) {
 			if (comment_line) {
 				comment_line = new_buf;
 				new_buf = false;
-				if (!comment_line) {
+				if (comment_line) {
 					// printf("(comment over)");
-				} else {
-					// printf("\n");
 					continue;
-				}	
+				}
 			}
+
+			new_buf = false;
 
 			// if already reading comment line but next line not NULL, reset
 			// if (!comment_line) {

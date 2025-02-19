@@ -67,6 +67,8 @@ int main(int argc, char **argv) {
 		exit(1); // TODO
 	}
 
+	printf("server created with port %d\n", port);
+
 	if (run(server) < 0) {
 		fprintf(stderr,"myserver ~ main(): server failed to receive from socket.\n");
 
@@ -174,6 +176,8 @@ struct client_info *find_new_client(struct server *server, char *outfile_path, u
 				fprintf(stderr, "myserver ~ accept_client(): encountered error while initializing client_info.\n");
 				return NULL;
 			}
+
+			printf("%d: inactive client found: id %u\n", ntohs(((struct sockaddr_in *)&server->serveraddr)->sin_port), id);
 			
 			break;
 		}

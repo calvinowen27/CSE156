@@ -494,8 +494,9 @@ int create_file_directory(const char *file_path) {
 
 			struct stat st = {0};
 			if (stat(outfile_dir, &st) == -1) {
-				if (mkdir(outfile_dir, 0700) < 0) {
+				if (mkdir(outfile_dir, 0700) < 0 && errno != EEXIST) {
 					fprintf(stderr, "utils ~ create_file_directory(): failed to make directory %s\n", outfile_dir);
+					fprintf(stderr, "\t%s\n", strerror(errno));
 					return -1;
 				}
 			}

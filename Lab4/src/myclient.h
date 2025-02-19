@@ -9,7 +9,7 @@ struct c_pkt_info {
 };
 
 struct server_info {
-	const char *ip;
+	char *ip;
 	int port;
 };
 
@@ -37,11 +37,15 @@ struct client {
 
 	bool handshake_confirmed;
 	int handshake_retransmits;
+
+	pthread_mutex_t *mut;
 };
+
+void *run_client(void *args);
 
 // initialize client with relevant information, perform handshake with server
 // return pointer to client struct on success, NULL on failure
-struct client *init_client(const char *infile_path, const char *outfile_path, struct server_info server, int mss, u_int32_t winsz);
+struct client *init_client(const char *infile_path, const char *outfile_path, struct server_info server, int mss, u_int32_t winsz, pthread_mutex_t *mut);
 
 // free all memory allocated in client and close infd and sockfd
 void free_client(struct client **client);
