@@ -152,6 +152,15 @@ int init_socket(struct sockaddr_in *sockaddr, const char *ip_addr, int port, int
 		return -1;
 	}
 
+	if (init_sockaddr(do_bind ? sockfd : -1, sockaddr, ip_addr, port, domain) < 0) {
+		fprintf(stderr, "utils ~ init_socket(): failed to initialize sockaddr: %s\n", strerror(errno));
+		return -1;
+	}
+
+	return sockfd;
+}
+
+int init_sockaddr(int sockfd, struct sockaddr_in *sockaddr, const char *ip_addr, int port, int domain) {
 	// init socket address struct with ip and port
 	sockaddr->sin_family = domain; // IPv4
 	sockaddr->sin_port = htons(port); // convert port endianness
@@ -159,17 +168,19 @@ int init_socket(struct sockaddr_in *sockaddr, const char *ip_addr, int port, int
 	if (ip_addr == NULL) {
 		sockaddr->sin_addr.s_addr = INADDR_ANY;
 	} else if (inet_pton(domain, ip_addr, &(sockaddr->sin_addr.s_addr)) < 0) {
-		fprintf(stderr, "utils ~ init_socket(): invalid ip address provided\n");
+		fprintf(stderr, "utils ~ init_sockaddr(): invalid ip address provided\n");
 		return -1;
 	}
+
+	if (sockfd > 0) printf("bind\n");
 
 	// bind socket
-	if (do_bind && bind(sockfd, (struct sockaddr *)sockaddr, sizeof(*sockaddr)) < 0) {
-		fprintf(stderr, "utils ~ init_socket(): failed to bind socket: %s\n", strerror(errno));
+	if (sockfd > 0 && bind(sockfd, (struct sockaddr *)sockaddr, sizeof(*sockaddr)) < 0) {
+		fprintf(stderr, "utils ~ init_sockaddr(): failed to bind socket: %s\n", strerror(errno));
 		return -1;
 	}
 
-	return sockfd;
+	return 0;
 }
 
 // assign opcode to first byte of pkt_buf

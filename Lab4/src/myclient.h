@@ -24,6 +24,9 @@ struct client {
 	struct sockaddr serveraddr;
 	socklen_t serveraddr_size;
 
+	struct sockaddr clientaddr;
+	socklen_t clientaddr_size;
+
 	int mss;
 	u_int32_t id;
 	u_int32_t winsz;
@@ -38,14 +41,16 @@ struct client {
 	bool handshake_confirmed;
 	int handshake_retransmits;
 
-	pthread_mutex_t *mut;
+	// pthread_mutex_t *mut;
+
+	int thread;
 };
 
 void *run_client(void *args);
 
 // initialize client with relevant information, perform handshake with server
 // return pointer to client struct on success, NULL on failure
-struct client *init_client(const char *infile_path, const char *outfile_path, struct server_info server, int mss, u_int32_t winsz, pthread_mutex_t *mut);
+struct client *init_client(const char *infile_path, const char *outfile_path, struct server_info server, int mss, u_int32_t winsz);
 
 // free all memory allocated in client and close infd and sockfd
 void free_client(struct client **client);

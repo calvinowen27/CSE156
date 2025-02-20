@@ -32,6 +32,8 @@ int shift_file_contents(int fd, off_t start_idx, int amount);
 // returns -1 on failure
 int init_socket(struct sockaddr_in *sockaddr, const char *ip_addr, int port, int domain, int type, int protocol, bool do_bind);
 
+int init_sockaddr(int sockfd, struct sockaddr_in *sockaddr, const char *ip_addr, int port, int domain);
+
 // assign opcode to first byte of pkt_buf
 // return 0 on success, -1 on error
 int assign_pkt_opcode(char *pkt_buf, int opcode);

@@ -77,18 +77,29 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 
-	pthread_mutex_t mut;
-	pthread_mutex_init(&mut, NULL);
+	// pthread_mutex_t mut;
+	// pthread_mutex_init(&mut, NULL);
+
+	struct client *clients[servn];
+
+	int exit_code = 0;
 
 	for (int i = 0; i < servn; i++) {
 		printf("server %i:\n\tip: %s\n\tport: %d\n", i, servers[i].ip, servers[i].port);
 		// void *args[6] = { (void *)infile_path, (void *)outfile_path, (void *)&servers[i], (void *)((intptr_t)mss), (void *)((uintptr_t)winsz), (void *)&mut };
 		
-		struct client *client = init_client(infile_path, outfile_path, servers[i], mss, winsz, &mut);
+		struct client *client = init_client(infile_path, outfile_path, servers[i], mss, winsz);
+
 		if (client == NULL) {
 			fprintf(stderr, "myclient ~ main(): encountered error initializing client\n");
-			exit(1); // TODO: different for multiple threads? etc.
+			// exit(1); // TODO: different for multiple threads? etc.
+			exit_code = 1;
+			break;
 		}
+
+		clients[i] = client;
+
+		client->thread = i; // TODO: temp?
 		
 		if (pthread_create(&threads[i], NULL, &run_client, (void *)client) < 0) {
 			fprintf(stderr, "myclient ~ main(): failed to spawn thread for client %d\n", i);
@@ -104,18 +115,42 @@ int main(int argc, char **argv) {
 		// free(clients[i]);
 	}
 
+	if (exit_code != 0) {
+		for (int i = 0; i < servn; i++) {
+			if (clients[i] != NULL) {
+				free_client(&clients[i]);
+			} else {
+				break;
+			}
+		}
+
+		free(servers);
+		exit(exit_code);
+	}
+
 	for (int i = 0; i < servn; i++) {
-		if (pthread_join(threads[i], NULL) < 0) {
+		void *ret = NULL;
+		if (pthread_join(threads[i], (void **)&ret) < 0) {
 			fprintf(stderr, "myclient ~ main(): encountered error waiting for thread %d to join.\n", i);
-			exit(1); // TODO: check this
+			// exit(1); // TODO: check this
+		}
+		
+		printf("thread %d joined\n", i);
+		
+		if (ret != NULL) {
+			printf("thread %d exited with code %d\n", i, (int)((intptr_t)ret));
+			exit_code = 6;
 		}
 
 		free(servers[i].ip);
 	}
 
-	pthread_mutex_destroy(&mut);
+	// pthread_mutex_destroy(&mut);
 
 	free(servers);
+
+	printf("exiting with code %d\n", exit_code);
+	exit(exit_code); // TODO: test this
 	
 	// struct client *client = init_client(infile_path, outfile_path, server, mss, winsz);
 	// if (client == NULL) {
@@ -146,14 +181,16 @@ void *run_client(void *client) {
 	// pthread_mutex_t *mut = (pthread_mutex_t *)((void **)args)[5];
 
 	// initiate handshake with WR and outfile path
-	if (start_handshake((struct client *)client) < 0) {
-		fprintf(stderr, "myclient ~ init_client(): encountered an error while performing handshake with server.\n");
-		return NULL;
+	int res;
+	if ((res = start_handshake((struct client *)client)) != 0) {
+		fprintf(stderr, "myclient ~ run_client(): encountered an error while performing handshake with server.\n");
+		return (void *)((intptr_t)res);
 	}
 
-	if (send_file(client) < 0) {
+	if ((res = send_file(client)) != 0) {
 		fprintf(stderr, "myclient ~ run_client(): failed to send or receive file to/from server.\n");
-		exit(1);
+		// exit(1);
+		return (void *)((intptr_t)res);
 	}
 
 	free_client((struct client **)&client);
@@ -163,7 +200,7 @@ void *run_client(void *client) {
 
 // initialize client with relevant information, perform handshake with server
 // return pointer to client struct on success, NULL on failure
-struct client *init_client(const char *infile_path, const char *outfile_path, struct server_info server, int mss, u_int32_t winsz, pthread_mutex_t *mut) {
+struct client *init_client(const char *infile_path, const char *outfile_path, struct server_info server, int mss, u_int32_t winsz) {
 	// check for NULL args
 	if (infile_path == NULL) {
 		fprintf(stderr, "myclient ~ init_client(): cannot initialize client with NULL infile_path ptr.\n");
@@ -210,6 +247,15 @@ struct client *init_client(const char *infile_path, const char *outfile_path, st
 		return NULL;
 	}
 
+	printf("binding client to port %d\n", server.port);
+
+	client->clientaddr_size = sizeof(client->clientaddr);
+
+	if (init_sockaddr(client->sockfd, (struct sockaddr_in *)&client->clientaddr, NULL, server.port+1000, AF_INET) < 0) {
+		fprintf(stderr, "myclient ~ init_client(): failed to initialize/bind client sockaddr.\n");
+		return NULL;
+	}
+
 	// set socket timeout
 	struct timeval server_timeout = { TIMEOUT_SECS, 0 };
 	if (setsockopt(client->sockfd, SOL_SOCKET, SO_RCVTIMEO, &server_timeout, sizeof(server_timeout)) < 0) {
@@ -221,7 +267,7 @@ struct client *init_client(const char *infile_path, const char *outfile_path, st
 	client->winsz = winsz;
 	client->pkt_count = 2 * winsz;
 
-	client->mut = mut;
+	// client->mut = mut;
 
 	// starts at 0 (invalid), set when handshake takes place
 	client->id = 0;
@@ -278,7 +324,7 @@ void free_client(struct client **client) {
 int start_handshake(struct client *client) {
 	if (client == NULL) {
 		fprintf(stderr, "myclient ~ start_handshake(): cannot perform handshake with NULL client ptr.\n");
-		return -1;
+		return 1;
 	}
 
 	int recv_res = 1;
@@ -288,13 +334,14 @@ int start_handshake(struct client *client) {
 		retransmits ++;
 
 		if (retransmits > 3) {
-			fprintf(stderr, "Reached max re-transmission limit\n");
-			exit(4);
+			fprintf(stderr, "Reached max re-transmission limit IP %s\n", client->server.ip);
+			// exit(4);
+			return 4;
 		}
 
 		if (send_wr_pkt(client) < 0) {
 			fprintf(stderr, "myclient ~ start_handshake(): failed to send WR pkt to server.\n");
-			return -1;
+			return 1;
 		}
 
 		fprintf(stderr, "Initial write request packet sent.\n");
@@ -306,12 +353,12 @@ int start_handshake(struct client *client) {
 
 	if (recv_res < 0) {
 		fprintf(stderr, "myclient ~ start_handshake(): failed to recv server handshake response.\n");
-		return -1;
-	}
+		return 1;
+	} else if (recv_res > 1) return recv_res;
 
 	if (send_ack_pkt(client, client->id) < 0) {
 		fprintf(stderr, "myclient ~ start_handshake(): failed to send handshake ACK to server.\n");
-		return -1;
+		return 1;
 	}
 
 	client->start_sn = (client->id + 1) % client->pkt_count;
@@ -323,19 +370,20 @@ int start_handshake(struct client *client) {
 int finish_handshake(struct client *client) {
 	if (client == NULL) {
 		fprintf(stderr, "myclient ~ finish_handshake(): cannot finish handshake with NULL client ptr.\n");
-		return -1;
+		return 1;
 	}
 
 	if (client->last_ackd_sn == client->id) {
 		if (send_ack_pkt(client, client->id) < 0) {
 			fprintf(stderr, "myclient ~ send_file(): failed to resend handshake ACK.\n");
-			return -1;
+			return 1;
 		}
 
 		client->handshake_retransmits ++;
 		if (client->handshake_retransmits > 3) {
-			fprintf(stderr, "Reached max re-transmission limit\n");
-			exit(4);
+			fprintf(stderr, "Reached max re-transmission limit IP %s\n", client->server.ip);
+			// exit(4);
+			return 4;
 		}
 
 		return 1;
@@ -368,7 +416,7 @@ int send_file(struct client *client) {
 			// send pkt window
 			if ((pkts_sent = send_window_pkts(client)) < 0) {
 				fprintf(stderr, "myclient ~ send_file(): encountered an error while sending pkt window.\n");
-				return -1;
+				return 1;
 			}
 
 			reached_eof = pkts_sent == 0; // update reached_eof
@@ -378,24 +426,25 @@ int send_file(struct client *client) {
 
 			if (!client->handshake_confirmed) {
 				int handshake_res = finish_handshake(client);
-				if (handshake_res == 1) continue;
-				if (handshake_res < 0) {
+				if (handshake_res == 0) {
+					continue;
+				} else {
 					fprintf(stderr, "myclient ~ send_file(): failed to complete handshake.\n");
-					return -1;
+					return handshake_res;
 				}
 			}
 		} while (recv_res == 1);
 
 		if (recv_res < 0) {
 			fprintf(stderr, "myclient ~ send_file(): encourntered an error while trying to receive server response.\n");
-			return -1;
+			return 1;
 		}
 
 		if (reached_eof) {
 			if (client->last_ackd_sn == client->last_sent_sn) {
 				if (send_ack_pkt(client, client->id) < 0) {
 					fprintf(stderr, "myclient ~ send_file(): failed to send connection termination ACK.\n");
-					return -1; // TODO: maybe don't return here?
+					return 1; // TODO: maybe don't return here?
 				}
 
 				break;
@@ -433,9 +482,10 @@ int send_window_pkts(struct client *client) {
 	client->last_sent_sn = (client->start_sn + client->pkt_count - 1) % client->pkt_count;
 
 	// reset pkt info array
-	if (update_pkt_info(client) < 0) {
+	int res;
+	if ((res = update_pkt_info(client)) != 0) {
 		fprintf(stderr, "myclient ~ send_window_pkts(): failed to update pkt info.\n");
-		return -1;
+		return res;
 	}
 
 	struct c_pkt_info *pkt;
@@ -472,14 +522,14 @@ int send_window_pkts(struct client *client) {
 
 		if (bytes_read < 0) {
 			fprintf(stderr, "myclient ~ send_window_pkts(): encountered an error reading from infile.\n");
-			return -1;
+			return 1;
 		} else if (bytes_read == 0) {
 			eof_reached = true;
 		}
 
 		if (send_data_pkt(client, pkt_buf, sizeof(pkt_buf), pyld_sz) < 0) {
 			fprintf(stderr, "myclient ~ send_window_pkts(): failed to send DATA pkt to server.\n");
-			return -1;
+			return 1;
 		}
 
 		sn = (sn + 1) % client->pkt_count;
@@ -512,12 +562,12 @@ int send_pkt(struct client *client, int opcode, char *pkt_buf, size_t pkt_size) 
 		return -1;
 	}
 
-	pthread_mutex_lock(client->mut);
+	// pthread_mutex_lock(client->mut);
 	if (sendto(client->sockfd, pkt_buf, pkt_size, 0, &client->serveraddr, client->serveraddr_size) < 0) {
 		fprintf(stderr, "myclient ~ send_pkt(): failed to send pkt to server: opcode %u\n", opcode);
 		return -1;
 	}
-	pthread_mutex_unlock(client->mut);
+	// pthread_mutex_unlock(client->mut);
 
 	if (log_pkt_sent(client, pkt_buf) < 0) { // TODO: fix
 		fprintf(stderr, "myclient ~ send_pkt(): failed to log pkt sent.\n");
@@ -615,7 +665,7 @@ int send_data_pkt(struct client *client, char *pkt_buf, size_t pkt_size, u_int32
 int update_pkt_info(struct client *client) {
 	if (client == NULL) {
 		fprintf(stderr, "myclient ~ update_pkt_info(): cannot update pkt info for NULL client ptr.\n");
-		return -1;
+		return 1;
 	}
 
 	struct c_pkt_info *pkt;
@@ -629,8 +679,9 @@ int update_pkt_info(struct client *client) {
 		} else if (pkt->active) {
 			pkt->retransmits ++;
 			if (pkt->retransmits > 3) {
-				fprintf(stderr, "Reached max re-transmission limit\n");
-				exit(4);
+				fprintf(stderr, "Reached max re-transmission limit IP %s\n", client->server.ip);
+				// exit(4);
+				return 4;
 			}
 		}
 	}
@@ -659,10 +710,10 @@ int recv_server_response(struct client *client) {
 
 	u_int32_t ack_sn;
 
-	pthread_mutex_lock(client->mut);
+	// pthread_mutex_lock(client->mut);
 	if (select(client->sockfd + 1, &fds, NULL, NULL, &timeout) > 0) { // check there is data to be read from socket
 		if ((bytes_recvd = recvfrom(client->sockfd, pkt_buf, sizeof(pkt_buf), 0, &client->serveraddr, &client->serveraddr_size)) >= 0) {			
-			pthread_mutex_unlock(client->mut);
+			// pthread_mutex_unlock(client->mut);
 			// recvfrom success
 			int opcode = get_pkt_opcode(pkt_buf);
 			switch (opcode) {
@@ -694,18 +745,18 @@ int recv_server_response(struct client *client) {
 				return -1;
 			}
 		} else { // recvfrom failed
-			pthread_mutex_unlock(client->mut);
-			fprintf(stderr, "Cannot detect server.\n");
-			exit(5);
+			// pthread_mutex_unlock(client->mut);
+			fprintf(stderr, "Server is down IP %s port %d\n", client->server.ip, client->server.port);
+			// exit(5);
+			return 5;
 		}
 	} else { // after timeout
+		// pthread_mutex_unlock(client->mut);
 		// TODO: retransmit pkt window since we didn't hear back from the server, keep track of retransmits per pkt
 		//		also make sure to update the error message V V V
 		fprintf(stderr, "Packet Loss Detected\n");
 		return 1;
 	}
-
-	pthread_mutex_unlock(client->mut);
 
 	return 0;
 }
@@ -735,7 +786,7 @@ int log_pkt_sent(struct client *client, char *pkt_buf) {
 		return -1;
 	}
 
-	printf("(sent: %u) %d-%02d-%02dT%02d:%02d:%02dZ, %s, %u, %u, %u, %u\n", client->id,
+	printf("(sent: %d) %d-%02d-%02dT%02d:%02d:%02dZ, %s, %u, %u, %u, %u\n", client->thread,
 																	tm->tm_year + 1900,
 																	tm->tm_mon + 1,
 																	tm->tm_mday,
@@ -775,7 +826,7 @@ int log_pkt_recvd(struct client *client, char *pkt_buf) {
 		return -1;
 	}
 
-	printf("(recvd: %u) %d-%02d-%02dT%02d:%02d:%02dZ, %s, %u, %u, %u, %u\n", client->id,
+	printf("(recvd: %d) %d-%02d-%02dT%02d:%02d:%02dZ, %s, %u, %u, %u, %u\n", client->thread,
 																	tm->tm_year + 1900,
 																	tm->tm_mon + 1,
 																	tm->tm_mday,
