@@ -88,6 +88,8 @@ int main(int argc, char **argv) {
 		printf("server %i:\n\tip: %s\n\tport: %d\n", i, servers[i].ip, servers[i].port);
 		// void *args[6] = { (void *)infile_path, (void *)outfile_path, (void *)&servers[i], (void *)((intptr_t)mss), (void *)((uintptr_t)winsz), (void *)&mut };
 		
+		if (servers[i].ip == NULL || servers[i].port < 0) break;
+
 		struct client *client = init_client(infile_path, outfile_path, servers[i], mss, winsz);
 
 		if (client == NULL) {
@@ -967,9 +969,13 @@ struct server_info *parse_serv_conf(const char *serv_conf_path, int servn) {
 						// TODO: free stuff?
 						return NULL;
 					}
+
 					serv_idx ++;
+					if (serv_idx == servn) break;
 				}
 			}
+
+			if (serv_idx == servn) break;
 
 			file_idx += 1;
 		}
