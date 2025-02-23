@@ -146,6 +146,7 @@ int client_info_init(struct client_info *client, u_int32_t client_id, char *outf
 	client->ack_sent = false;
 	client->terminating = false;
 	client->handshaking = true;
+	client->waiting = false;
 
 	// allocate s_pkt_info buffer
 	client->pkt_info = calloc(sizeof(struct s_pkt_info), client->pkt_count);

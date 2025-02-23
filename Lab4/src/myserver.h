@@ -25,6 +25,8 @@ struct server *init_server(int port, int droppc, const char *root_folder_path);
 // free allocated memory for server, terminate clients, and close socket
 void close_server(struct server **server);
 
+struct client_info *check_existing_client(struct server *server, char *outfile_path);
+
 // accept new client with id client_id writing to file outfile_path
 // open outfile and add client to clients with outfd
 // return client_info ptr on success, NULL on failure

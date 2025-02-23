@@ -124,6 +124,8 @@ void close_server(struct server **server) {
 		client = &(*server)->clients[i];
 		if (client->is_active) {
 			terminate_client(*server, client->id); // TODO: change terminate_client() to use client_info ptr?
+		} else if (client->waiting || client->handshaking) {
+			free(client->outfile_path);
 		}
 	}
 
@@ -134,6 +136,35 @@ void close_server(struct server **server) {
 	free(*server);
 
 	*server = NULL;
+}
+
+struct client_info *check_existing_client(struct server *server, char *outfile_path) {
+	if (server == NULL) {
+		fprintf(stderr, "myserver ~ check_existing_client(): NULL ptr passed to server parameter.\n");
+		return NULL;
+	}
+
+	if (outfile_path == NULL) {
+		fprintf(stderr, "myserver ~ check_existing_client(): NULL ptr passed to outfile_path parameter.\n");
+		return NULL;
+	}
+
+	char new_file_path[strlen(server->root_folder_path) + strlen(outfile_path) + 1];
+	new_file_path[sizeof(new_file_path) - 1] = 0; // null terminate
+	memcpy(new_file_path, server->root_folder_path, strlen(server->root_folder_path));
+	memcpy(new_file_path + strlen(server->root_folder_path), outfile_path, strlen(outfile_path));
+
+	struct client_info *client;
+	for (u_int32_t id = 1; id <= server->max_client_count; id++) {
+		client = &server->clients[id - 1];
+		if (client->outfile_path != NULL && !strcmp(client->outfile_path, new_file_path)) {
+			return client;
+		} else {
+			fprintf(stderr, "PATH CHECK: %s != %s\n", client->outfile_path, new_file_path);
+		}
+	}
+
+	return NULL;
 }
 
 // accept new client with id client_id writing to file outfile_path
@@ -157,8 +188,8 @@ struct client_info *find_new_client(struct server *server, char *outfile_path, u
 	// 	new_file_path[strlen(server->root_folder_path)] = '/';
 	// }
 
-	char new_file_path[strlen(server->root_folder_path) + strlen(outfile_path) + 1];
-	new_file_path[sizeof(new_file_path) - 1] = 0; // null terminate
+	char *new_file_path = calloc(strlen(server->root_folder_path) + strlen(outfile_path) + 1, sizeof(char));
+	// char new_file_path[strlen(server->root_folder_path) + strlen(outfile_path) + 1];
 	memcpy(new_file_path, server->root_folder_path, strlen(server->root_folder_path));
 	memcpy(new_file_path + strlen(server->root_folder_path), outfile_path, strlen(outfile_path));
 
@@ -201,6 +232,7 @@ struct client_info *find_new_client(struct server *server, char *outfile_path, u
 
 	return client;
 }
+
 int accept_client(struct client_info *client) {
 	if (client == NULL) {
 		fprintf(stderr, "myserver ~ find_new_client(): NULL ptr passed to client parameter.\n");
@@ -238,6 +270,27 @@ int terminate_client(struct server *server, u_int32_t client_id) {
 		fprintf(stderr, "myserver ~ terminate_client(): cannot terminate inactive client %u.\n", client_id);
 		return -1;
 	}
+
+	// check for clients waiting for same path
+	struct client_info *check_client;
+	for (u_int32_t id = 1; id <= server->max_client_count; id++) {
+		check_client = &server->clients[id - 1];
+		if (check_client->outfile_path == client->outfile_path && id != client->id) {
+		// send ack with client id as sn
+			fprintf(stderr, "Re-initiating handshake with waiting client (busy path)\n");
+			if (send_client_ack_sn(server, check_client, id) < 0) {
+				fprintf(stderr, "myserver ~ terminate_client(): encountered error sending ACK with client id %u to accept client.\n", client->id);
+				return -1;
+			}
+
+			check_client->waiting = false;
+
+			break;
+		}
+	}
+
+	free(client->outfile_path);
+	client->outfile_path = NULL;
 
 	fprintf(stderr, "Client %u terminated.\n", client->id);
 
@@ -482,23 +535,57 @@ int process_write_req(struct server *server, char *pkt_buf) {
 	outfile_path[sizeof(outfile_path) - 1] = 0; // null terminate
 	memcpy(outfile_path, pkt_buf + WR_HEADER_SIZE, strlen(pkt_buf + WR_HEADER_SIZE));
 
-	// accept client, initializing all client_info data and opening outfile for writing
-	struct client_info *client = find_new_client(server, outfile_path, winsz);
-	if (client == NULL) {
-		fprintf(stderr, "myserver ~ process_write_req(): encountered error while accepting client.\n");
-		return -1;
+	struct client_info *client;
+
+	if ((client = check_existing_client(server, outfile_path)) == NULL) {
+		// accept client, initializing all client_info data and opening outfile for writing
+		client = find_new_client(server, outfile_path, winsz);
+		if (client == NULL) {
+			fprintf(stderr, "myserver ~ process_write_req(): encountered error while accepting client.\n");
+			return -1;
+		}
+		
+		printf("sent client ID: %u\n", client->id);
+
+		// send ack with client id as sn
+		if (send_client_ack_sn(server, client, client->id) < 0) {
+			fprintf(stderr, "myserver ~ process_write_req(): encountered error sending ACK with client id %u to accept client.\n", client->id);
+			return -1;
+		}
+		
+		client->handshaking = true;
+	} else {
+		fprintf(stderr, "Existing client with outfile path found\n");
+
+		if (client->handshaking && !client->waiting) {
+			fprintf(stderr, "Client handshaking, resending handshake ACK to port %d\n", ntohs(((struct sockaddr_in *)(&client->sockaddr))->sin_port));
+
+			client->ack_sent = false;
+
+			// send ack with client id as sn
+			if (send_client_ack_sn(server, client, client->id) < 0) {
+				fprintf(stderr, "myserver ~ process_write_req(): encountered error sending ACK with client id %u to accept client.\n", client->id);
+				return -1;
+			}
+		} else {
+			fprintf(stderr, "Conflicting filepath, storing client and sending BUSY message\n");
+
+			client = find_new_client(server, outfile_path, winsz);
+			if (client == NULL) {
+				fprintf(stderr, "myserver ~ process_write_req(): encountered error while accepting client.\n");
+				return -1;
+			}
+
+			client->waiting = true;
+
+			char pkt = OP_BUSY;
+			if (send_pkt(server, client, &pkt, 1) < 0) {
+				fprintf(stderr, "myserver ~ process_write_req(): encountered error sending BUSY pkt to client\n");
+				return -1;
+			}
+		}
 	}
-
-	// send ack with client id as sn
-	if (send_client_ack_sn(server, client, client->id) < 0) {
-		fprintf(stderr, "myserver ~ process_write_req(): encountered error sending ACK with client id %u to accept client.\n", client->id);
-		return -1;
-	}
-
-	// printf("sent client ID: %u\n", client->id);
-
-	client->handshaking = true;
-
+		
 	return 0;
 }
 
@@ -599,9 +686,9 @@ int process_data_pkt(struct server *server, char *pkt_buf) {
 
 	// if we've made it to here, everything is valid and client is writing data to file
 
-	if (pkt_sn == client->expected_sn) { // normal, write bytes to outfile
-		client->ack_sent = false;
+	client->ack_sent = false;
 
+	if (pkt_sn == client->expected_sn) { // normal, write bytes to outfile
 		if (pkt->written) {
 			lseek(client->outfd, pkt->file_idx, SEEK_SET);
 		} else {

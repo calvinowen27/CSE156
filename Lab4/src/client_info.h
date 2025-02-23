@@ -28,6 +28,7 @@ struct client_info {
 	bool is_active;
 	bool terminating;
 	bool handshaking;
+	bool waiting;
 };
 
 // initialize client array and set default values for client_info entries

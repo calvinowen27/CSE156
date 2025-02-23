@@ -247,14 +247,15 @@ struct client *init_client(const char *infile_path, const char *outfile_path, st
 		return NULL;
 	}
 
-	printf("binding client to port %d\n", server.port);
-
+	
 	client->clientaddr_size = sizeof(client->clientaddr);
-
-	if (init_sockaddr(client->sockfd, (struct sockaddr_in *)&client->clientaddr, NULL, server.port+1000, AF_INET) < 0) {
+	
+	if (init_sockaddr(client->sockfd, (struct sockaddr_in *)&client->clientaddr, NULL, 0, AF_INET) < 0) {
 		fprintf(stderr, "myclient ~ init_client(): failed to initialize/bind client sockaddr.\n");
 		return NULL;
 	}
+
+	// printf("binding client to port %d\n", htons(((struct sockaddr_in *)(&client->clientaddr))->sin_port));
 
 	// set socket timeout
 	struct timeval server_timeout = { TIMEOUT_SECS, 0 };
@@ -347,6 +348,38 @@ int start_handshake(struct client *client) {
 		fprintf(stderr, "Initial write request packet sent.\n");
 	} while ((recv_res = recv_server_response(client)) == 1);
 
+	if (recv_res == 2) {
+		// wait up to 30 seconds for acceptance ACK
+		fd_set fds;
+		FD_SET(client->sockfd, &fds);
+
+		struct timeval timeout = { TIMEOUT_SECS, 0 };
+
+		if (select(client->sockfd + 1, &fds, NULL, NULL, &timeout) > 0) { // check there is data to be read from socket
+			retransmits = -1;
+
+			do {
+				retransmits ++;
+
+				if (retransmits > 3) {
+					fprintf(stderr, "Reached max re-transmission limit IP %s\n", client->server.ip);
+					// exit(4);
+					return 4;
+				}
+
+				if (send_wr_pkt(client) < 0) {
+					fprintf(stderr, "myclient ~ start_handshake(): failed to send WR pkt to server.\n");
+					return 1;
+				}
+
+				fprintf(stderr, "Initial write request packet sent.\n");
+			} while ((recv_res = recv_server_response(client)) == 1);
+		} else {
+			fprintf(stderr, "Never heard back from server.\n");
+			return 1;
+		}
+	}
+
 	client->id = client->last_ackd_sn;
 
 	fprintf(stderr, "Client ID assigned by server: %u\n", client->id);
@@ -386,7 +419,7 @@ int finish_handshake(struct client *client) {
 			return 4;
 		}
 
-		return 1;
+		return 2;
 	} else {
 		client->handshake_confirmed = true;
 
@@ -426,9 +459,9 @@ int send_file(struct client *client) {
 
 			if (!client->handshake_confirmed) {
 				int handshake_res = finish_handshake(client);
-				if (handshake_res == 0) {
+				if (handshake_res == 2) {
 					continue;
-				} else {
+				} else if (handshake_res != 0) {
 					fprintf(stderr, "myclient ~ send_file(): failed to complete handshake.\n");
 					return handshake_res;
 				}
@@ -711,11 +744,12 @@ int recv_server_response(struct client *client) {
 	u_int32_t ack_sn;
 
 	// pthread_mutex_lock(client->mut);
-	if (select(client->sockfd + 1, &fds, NULL, NULL, &timeout) > 0) { // check there is data to be read from socket
+	if (select(client->sockfd + 1, &fds, NULL, NULL, &timeout) > 0 && FD_ISSET(client->sockfd, &fds)) { // check there is data to be read from socket
 		if ((bytes_recvd = recvfrom(client->sockfd, pkt_buf, sizeof(pkt_buf), 0, &client->serveraddr, &client->serveraddr_size)) >= 0) {			
 			// pthread_mutex_unlock(client->mut);
 			// recvfrom success
 			int opcode = get_pkt_opcode(pkt_buf);
+			printf("PACKET RECEIVED\n");
 			switch (opcode) {
 				case OP_ACK:
 					ack_sn = get_ack_sn(pkt_buf);	// assign pkt sn to ack_pkt_sn
@@ -728,10 +762,10 @@ int recv_server_response(struct client *client) {
 
 					client->last_ackd_sn = ack_sn;
 					break;
-				case OP_ERROR:
+				case OP_BUSY:
 					// TODO: idk how this is supposed to be handled tbh so make sure it's right
-					fprintf(stderr, "myclient ~ recv_server_response(): received error from server, exiting.\n");
-					return 0;
+					fprintf(stderr, "myclient ~ recv_server_response(): received BUSY from server\n");
+					return 2;
 					break;
 				default:
 					// TODO: make sure this is implemented correctly too
