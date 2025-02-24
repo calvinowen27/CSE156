@@ -172,8 +172,6 @@ int init_sockaddr(int sockfd, struct sockaddr_in *sockaddr, const char *ip_addr,
 		return -1;
 	}
 
-	if (sockfd > 0) printf("bind\n");
-
 	// bind socket
 	if (sockfd > 0 && bind(sockfd, (struct sockaddr *)sockaddr, sizeof(*sockaddr)) < 0) {
 		fprintf(stderr, "utils ~ init_sockaddr(): failed to bind socket: %s\n", strerror(errno));
