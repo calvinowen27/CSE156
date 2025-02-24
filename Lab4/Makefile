@@ -11,7 +11,7 @@ all: $(CLIENT_BIN) $(SERVER_BIN)
 
 $(CLIENT_BIN): $(CLIENT_OBJS)
 	mkdir -p bin
-	gcc -o bin/$@ $^
+	gcc -pthread -o bin/$@ $^
 
 $(SERVER_BIN): $(SERVER_OBJS)
 	mkdir -p bin
