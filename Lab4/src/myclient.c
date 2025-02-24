@@ -751,7 +751,7 @@ int recv_server_response(struct client *client) {
 
 	u_int32_t ack_sn;
 
-	struct pollfd fds[1] = { {client->sockfd, POLL_IN, 0 } };
+	struct pollfd fds[1] = { {client->sockfd, POLLIN, 0 } };
 
 	int poll_res;
 	if ((poll_res = poll(fds, 1, LOSS_TIMEOUT_SECS * 1000)) > 0) {
