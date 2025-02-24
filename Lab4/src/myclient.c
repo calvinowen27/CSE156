@@ -351,16 +351,17 @@ int start_handshake(struct client *client) {
 	} while ((recv_res = recv_server_response(client)) == 1);
 
 	if (recv_res == 2) {
+		fprintf(stderr, "Waiting for server to re-initiate handshake\n");
 		// wait up to 30 seconds for acceptance ACK
 		fd_set fds;
 		FD_SET(client->sockfd, &fds);
 
 		struct timeval timeout = { TIMEOUT_SECS, 0 };
 
-		if (select(client->sockfd + 1, &fds, NULL, NULL, &timeout) > 0) { // check there is data to be read from socket
-			retransmits = -1;
+		if (select(client->sockfd + 1, &fds, NULL, NULL, &timeout) > 0 && FD_ISSET(client->sockfd, &fds)) { // check there is data to be read from socket
+			retransmits = 0;
 
-			do {
+			while ((recv_res = recv_server_response(client)) == 1) {
 				retransmits ++;
 
 				if (retransmits > 3) {
@@ -375,7 +376,7 @@ int start_handshake(struct client *client) {
 				}
 
 				fprintf(stderr, "Initial write request packet sent.\n");
-			} while ((recv_res = recv_server_response(client)) == 1);
+			}
 		} else {
 			fprintf(stderr, "Never heard back from server.\n");
 			return 1;
@@ -767,6 +768,10 @@ int recv_server_response(struct client *client) {
 				case OP_BUSY:
 					// TODO: idk how this is supposed to be handled tbh so make sure it's right
 					fprintf(stderr, "myclient ~ recv_server_response(): received BUSY from server\n");
+					if (log_pkt_recvd(client, pkt_buf) < 0) {
+						fprintf(stderr, "myclient ~ send_window_pkts(): encountered error logging pkt info.\n");
+						return -1;
+					}
 					return 2;
 					break;
 				default:
@@ -849,14 +854,14 @@ int log_pkt_recvd(struct client *client, char *pkt_buf) {
 		return -1;
 	}
 
-	if (opcode < OP_WR || opcode > OP_DATA) {
+	if (opcode < OP_WR || opcode > OP_BUSY) {
 		fprintf(stderr, "myclient ~ log_pkt(): opcode %u is not supported by server.\n", opcode);
 		return -1;
 	}
 
-	char *opstring = opcode == OP_ACK ? "ACK" : (opcode == OP_WR ? "CTRL" : "DATA");
+	char *opstring = opcode == OP_ACK ? "ACK" : "CTRL";
 
-	u_int32_t sn = opcode == OP_WR ? get_wr_sn(pkt_buf) : (opcode == OP_ACK ? get_ack_sn(pkt_buf) : get_data_sn(pkt_buf));
+	u_int32_t sn = opcode == OP_WR ? get_wr_sn(pkt_buf) : (opcode == OP_ACK ? get_ack_sn(pkt_buf) : 0);
 	if (sn == 0 && errno == 1) {
 		fprintf(stderr, "myclient ~ log_pkt(): encountered an error getting pkt sn from pkt.\n");
 		return -1;

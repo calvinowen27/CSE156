@@ -242,6 +242,13 @@ int accept_client(struct client_info *client) {
 	client->is_active = true;
 	client->handshaking = false;
 
+	client->outfd = open(client->outfile_path, O_CREAT | O_TRUNC | O_RDWR, 0664);
+
+	if (client->outfd < 0) {
+		fprintf(stderr, "myserver ~ accept_client(): failed to open client outfile: %s with error %s\n", client->outfile_path, strerror(errno));
+		return -1;
+	}
+
 	return 0;
 }
 
@@ -275,7 +282,9 @@ int terminate_client(struct server *server, u_int32_t client_id) {
 	struct client_info *check_client;
 	for (u_int32_t id = 1; id <= server->max_client_count; id++) {
 		check_client = &server->clients[id - 1];
-		if (check_client->outfile_path == client->outfile_path && id != client->id) {
+		if (client->outfile_path == NULL || check_client->outfile_path == NULL) continue;
+
+		if (!strcmp(check_client->outfile_path, client->outfile_path) && id != client->id) {
 		// send ack with client id as sn
 			fprintf(stderr, "Re-initiating handshake with waiting client (busy path)\n");
 			if (send_client_ack_sn(server, check_client, id) < 0) {
@@ -557,7 +566,7 @@ int process_write_req(struct server *server, char *pkt_buf) {
 	} else {
 		fprintf(stderr, "Existing client with outfile path found\n");
 
-		if (client->handshaking && !client->waiting) {
+		if (client->handshaking && !client->waiting && sockaddrs_eq(client->sockaddr, server->clientaddr)) {
 			fprintf(stderr, "Client handshaking, resending handshake ACK to port %d\n", ntohs(((struct sockaddr_in *)(&client->sockaddr))->sin_port));
 
 			client->ack_sent = false;

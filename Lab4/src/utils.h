@@ -84,6 +84,8 @@ u_int32_t get_ack_sn(char *pkt_buf);
 // return 0 on success, -1 on error
 int create_file_directory(const char *file_path);
 
+bool sockaddrs_eq(struct sockaddr sockaddr1, struct sockaddr sockaddr2);
+
 
 
 #endif

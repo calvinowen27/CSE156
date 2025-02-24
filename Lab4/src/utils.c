@@ -518,3 +518,21 @@ int create_file_directory(const char *file_path) {
 
 	return 0;
 }
+
+bool sockaddrs_eq(struct sockaddr sockaddr1, struct sockaddr sockaddr2) {
+	if (sockaddr1.sa_family != sockaddr2.sa_family) {
+		return false;
+	}
+
+	if (sockaddr1.sa_len != sockaddr2.sa_len) {
+		return false;
+	}
+
+	for (unsigned long i = 0; i < sizeof(sockaddr1.sa_data); i++) {
+		if (sockaddr1.sa_data[i] != sockaddr2.sa_data[i]) {
+			return false;
+		}
+	}
+
+	return true;
+}
