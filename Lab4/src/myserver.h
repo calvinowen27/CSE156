@@ -1,7 +1,7 @@
 #ifndef MYSERVER_INCLUDE
 #define MYSERVER_INCLUDE
 
-#define START_CLIENTS 5
+#define START_CLIENTS 10
 #define CLIENT_CAP_INCREASE 5
 
 struct client_info;
