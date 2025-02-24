@@ -85,10 +85,9 @@ int main(int argc, char **argv) {
 	int exit_code = 0;
 
 	for (int i = 0; i < servn; i++) {
-		printf("server %i:\n\tip: %s\n\tport: %d\n", i, servers[i].ip, servers[i].port);
-		// void *args[6] = { (void *)infile_path, (void *)outfile_path, (void *)&servers[i], (void *)((intptr_t)mss), (void *)((uintptr_t)winsz), (void *)&mut };
-		
 		if (servers[i].ip == NULL || servers[i].port < 0) break;
+
+		printf("server %i:\n\tip: %s\n\tport: %d\n", i, servers[i].ip, servers[i].port);
 
 		struct client *client = init_client(infile_path, outfile_path, servers[i], mss, winsz);
 
@@ -149,7 +148,9 @@ int main(int argc, char **argv) {
 			exit_code = 6;
 		}
 
-		free(servers[i].ip);
+		if (servers[i].ip != NULL) {
+			free(servers[i].ip);
+		}
 	}
 
 	// pthread_mutex_destroy(&mut);
@@ -959,40 +960,89 @@ struct server_info *parse_serv_conf(const char *serv_conf_path, int servn) {
 
 			// printf("\n");
 
-			for (part = strtok_r(line, " ", &part_ref); part; part = strtok_r(NULL, "\n", &part_ref)) {
-				// printf("\tpart: %s\n", part);
+			part = strtok_r(line, " ", &part_ref);
+			if (part == NULL) continue;
+			if (servers[serv_idx].ip == NULL) {
+				// printf("creating ip\n");
+				servers[serv_idx].ip = calloc(strlen(part) + 1, sizeof(char));
 				if (servers[serv_idx].ip == NULL) {
-					// printf("creating ip\n");
-					servers[serv_idx].ip = calloc(strlen(part) + 1, sizeof(char));
-					if (servers[serv_idx].ip == NULL) {
-						fprintf(stderr, "myclient ~ parse_serv_conf(): failed to allocate memory for server %d ip.\n", serv_idx);
-						// TODO: free stuff?
-						return NULL;
-					}
-					memcpy((void *)servers[serv_idx].ip, part, strlen(part));
-					// printf("ip: %s\n", servers[serv_idx].ip);
-				} else if (servers[serv_idx].port == -1) {
-					// printf("creating port\n");
-					servers[serv_idx].port = atoi(part);
-					if (servers[serv_idx].port < 0 || servers[serv_idx].port > 65535) {
-						fprintf(stderr, "myclient ~ parse_serv_conf(): invalid port provided in config file: %s\n", part);
-						// TODO: free stuff?
-						return NULL;
-					}
-
-					serv_idx ++;
-					if (serv_idx == servn) {
-						break;
-					}
-				} else {
-					exit(1);
+					fprintf(stderr, "myclient ~ parse_serv_conf(): failed to allocate memory for server %d ip.\n", serv_idx);
+					// TODO: free stuff?
+					close(fd);
+					return NULL;
 				}
+				memcpy((void *)servers[serv_idx].ip, part, strlen(part));
+				// printf("ip: %s\n", servers[serv_idx].ip);
+				
 			}
 
+			part = strtok_r(NULL, " ", &part_ref);
+			if (part == NULL) continue;
+			if (servers[serv_idx].port == -1) {
+				// printf("creating port\n");
+				servers[serv_idx].port = atoi(part);
+				if (servers[serv_idx].port <= 0 || servers[serv_idx].port > 65535) {
+					fprintf(stderr, "myclient ~ parse_serv_conf(): invalid port provided in config file: %s\n", part);
+					// TODO: free stuff?
+					close(fd);
+					return NULL;
+				}
+				// printf("port %d\n", servers[serv_idx].port);
+
+				serv_idx ++;
+				if (serv_idx == servn) break;
+			}
+
+			part = strtok_r(NULL, " ", &part_ref);
+			if (part != NULL) {
+				close(fd);
+				return NULL;
+			}
+
+			serv_idx ++;
 			if (serv_idx == servn) break;
+
+
+			// for (part = strtok_r(line, " ", &part_ref); part; part = strtok_r(NULL, " \n", &part_ref)) {
+			// 	printf("server %d - %s:%d\n", serv_idx, servers[serv_idx].ip, servers[serv_idx].port);
+			// 	printf("part:%s:\n", part);
+
+			// 	// printf("\tpart: %s\n", part);
+			// 	if (servers[serv_idx].ip == NULL) {
+			// 		// printf("creating ip\n");
+			// 		servers[serv_idx].ip = calloc(strlen(part) + 1, sizeof(char));
+			// 		if (servers[serv_idx].ip == NULL) {
+			// 			fprintf(stderr, "myclient ~ parse_serv_conf(): failed to allocate memory for server %d ip.\n", serv_idx);
+			// 			// TODO: free stuff?
+			// 			close(fd);
+			// 			return NULL;
+			// 		}
+			// 		memcpy((void *)servers[serv_idx].ip, part, strlen(part));
+			// 		// printf("ip: %s\n", servers[serv_idx].ip);
+					
+			// 	} else if (servers[serv_idx].port == -1) {
+			// 		// printf("creating port\n");
+			// 		servers[serv_idx].port = atoi(part);
+			// 		if (servers[serv_idx].port <= 0 || servers[serv_idx].port > 65535) {
+			// 			fprintf(stderr, "myclient ~ parse_serv_conf(): invalid port provided in config file: %s\n", part);
+			// 			// TODO: free stuff?
+			// 			close(fd);
+			// 			return NULL;
+			// 		}
+			// 		// printf("port %d\n", servers[serv_idx].port);
+
+			// 		serv_idx ++;
+			// 		if (serv_idx == servn) break;
+			// 	} else {
+			// 		close(fd);
+			// 		return NULL;
+			// 	}
+			// }
 
 			file_idx += 1;
 		}
+
+		if (serv_idx == servn) break;
 
 		lseek(fd, file_idx, SEEK_SET);
 

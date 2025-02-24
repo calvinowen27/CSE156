@@ -26,7 +26,7 @@ do
 	port=$((9090+i))
 
 	out_path="out/server$i""_out/"
-	./bin/myserver $port 15 $out_path &
+	./bin/myserver $port 0 $out_path &
 	pid=$!
 	servers+=($pid)
 done
