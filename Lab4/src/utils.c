@@ -522,9 +522,9 @@ bool sockaddrs_eq(struct sockaddr sockaddr1, struct sockaddr sockaddr2) {
 		return false;
 	}
 
-	if (sockaddr1.sa_len != sockaddr2.sa_len) {
-		return false;
-	}
+	// if (sockaddr1.sa_len != sockaddr2.sa_len) {
+	// 	return false;
+	// }
 
 	for (unsigned long i = 0; i < sizeof(sockaddr1.sa_data); i++) {
 		if (sockaddr1.sa_data[i] != sockaddr2.sa_data[i]) {
