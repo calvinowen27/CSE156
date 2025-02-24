@@ -139,16 +139,14 @@ int main(int argc, char **argv) {
 		
 		printf("thread %d joined\n", i);
 		
-		if (ret != NULL) {
-			int ret_code = (int)((intptr_t)ret);
+		int ret_code = (int)((intptr_t)ret);
 
-			printf("thread %d exited with code %d\n", i, ret_code);
+		printf("thread %d exited with code %d\n", i, ret_code);
 
-			if (i == 0) {
-				exit_code = ret_code;
-			} else if (exit_code != ret_code) {
-				exit_code = 6;
-			}
+		if (i == 0) {
+			exit_code = ret_code;
+		} else if (exit_code != ret_code) {
+			exit_code = 6;
 		}
 
 		free(servers[i].ip);
@@ -983,7 +981,11 @@ struct server_info *parse_serv_conf(const char *serv_conf_path, int servn) {
 					}
 
 					serv_idx ++;
-					if (serv_idx == servn) break;
+					if (serv_idx == servn) {
+						break;
+					}
+				} else {
+					exit(1);
 				}
 			}
 

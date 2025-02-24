@@ -633,7 +633,7 @@ int process_data_pkt(struct server *server, char *pkt_buf) {
 
 	// don't process data, but don't exit server
 	if (client == NULL || !client->is_active) {
-		fprintf(stderr, "myserver ~ process_data_pkt(): failed to find client %u. Terminating.\n", client_id);
+		fprintf(stderr, "myserver ~ process_data_pkt(): failed to find client %u, skipping packet.\n", client_id);
 		return 0;
 	}
 
@@ -764,7 +764,7 @@ int process_ack_pkt(struct server *server, char *pkt_buf) {
 		return -1;
 	}
 
-	if (client->terminating) {
+	if (client->is_active && client->terminating) {
 		if (terminate_client(server, client_id) < 0) {
 			fprintf(stderr, "myserver ~ process_ack_pkt(): encountered an error terminating connection with client %u.\n", client_id);
 			return -1;
