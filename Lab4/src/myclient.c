@@ -13,6 +13,7 @@
 #include <regex.h>
 #include <time.h>
 #include <pthread.h>
+#include <poll.h>
 
 #include "myclient.h"
 #include "utils.h"
@@ -82,8 +83,6 @@ int main(int argc, char **argv) {
 
 	struct client *clients[servn];
 
-	int exit_code = 0;
-
 	for (int i = 0; i < servn; i++) {
 		if (servers[i].ip == NULL || servers[i].port < 0) break;
 
@@ -94,7 +93,18 @@ int main(int argc, char **argv) {
 		if (client == NULL) {
 			fprintf(stderr, "myclient ~ main(): encountered error initializing client\n");
 			// exit(1); // TODO: different for multiple threads? etc.
-			exit_code = 1;
+			
+			for (int i = 0; i < servn; i++) {
+				if (clients[i] != NULL) {
+					free_client(&clients[i]);
+				} else {
+					break;
+				}
+			}
+	
+			free(servers);
+			exit(1);
+
 			break;
 		}
 
@@ -116,18 +126,7 @@ int main(int argc, char **argv) {
 		// free(clients[i]);
 	}
 
-	if (exit_code != 0) {
-		for (int i = 0; i < servn; i++) {
-			if (clients[i] != NULL) {
-				free_client(&clients[i]);
-			} else {
-				break;
-			}
-		}
-
-		free(servers);
-		exit(exit_code);
-	}
+	int exit_code = 0;
 
 	for (int i = 0; i < servn; i++) {
 		void *ret = NULL;
@@ -458,7 +457,7 @@ int send_file(struct client *client) {
 			// send pkt window
 			if ((pkts_sent = send_window_pkts(client)) < 0) {
 				fprintf(stderr, "myclient ~ send_file(): encountered an error while sending pkt window.\n");
-				return 1;
+				return -pkts_sent;
 			}
 
 			reached_eof = pkts_sent == 0; // update reached_eof
@@ -527,7 +526,7 @@ int send_window_pkts(struct client *client) {
 	int res;
 	if ((res = update_pkt_info(client)) != 0) {
 		fprintf(stderr, "myclient ~ send_window_pkts(): failed to update pkt info.\n");
-		return res;
+		return -res;
 	}
 
 	struct c_pkt_info *pkt;
@@ -564,14 +563,14 @@ int send_window_pkts(struct client *client) {
 
 		if (bytes_read < 0) {
 			fprintf(stderr, "myclient ~ send_window_pkts(): encountered an error reading from infile.\n");
-			return 1;
+			return -1;
 		} else if (bytes_read == 0) {
 			eof_reached = true;
 		}
 
 		if (send_data_pkt(client, pkt_buf, sizeof(pkt_buf), pyld_sz) < 0) {
 			fprintf(stderr, "myclient ~ send_window_pkts(): failed to send DATA pkt to server.\n");
-			return 1;
+			return -1;
 		}
 
 		sn = (sn + 1) % client->pkt_count;
@@ -743,17 +742,25 @@ int recv_server_response(struct client *client) {
 	memset(pkt_buf, 0, sizeof(pkt_buf));
 
 	// configure fds and timeout for select() call
-	fd_set fds;
-	FD_SET(client->sockfd, &fds);
+	// fd_set fds;
+	// FD_SET(client->sockfd, &fds);
 
-	struct timeval timeout = { LOSS_TIMEOUT_SECS, 0 };
+	// struct timeval timeout = { LOSS_TIMEOUT_SECS, 0 };
 
 	int bytes_recvd;
 
 	u_int32_t ack_sn;
 
+	struct pollfd fds[1] = { {client->sockfd, POLL_IN, 0 } };
+
+	int poll_res;
+	if ((poll_res = poll(fds, 1, LOSS_TIMEOUT_SECS)) > 0) {
+
 	// pthread_mutex_lock(client->mut);
-	if (select(client->sockfd + 1, &fds, NULL, NULL, &timeout) > 0 && FD_ISSET(client->sockfd, &fds)) { // check there is data to be read from socket
+	// if (select(client->sockfd + 1, &fds, NULL, NULL, &timeout) > 0) { // check there is data to be read from socket
+	// 	if (!FD_ISSET(client->sockfd, &fds)) {
+	// 		return recv_server_response(client);
+	// 	}
 		if ((bytes_recvd = recvfrom(client->sockfd, pkt_buf, sizeof(pkt_buf), 0, &client->serveraddr, &client->serveraddr_size)) >= 0) {			
 			// pthread_mutex_unlock(client->mut);
 			// recvfrom success
@@ -797,13 +804,21 @@ int recv_server_response(struct client *client) {
 			// exit(5);
 			return 5;
 		}
-	} else { // after timeout
-		// pthread_mutex_unlock(client->mut);
-		// TODO: retransmit pkt window since we didn't hear back from the server, keep track of retransmits per pkt
-		//		also make sure to update the error message V V V
+	} else if (poll_res == 0) {
 		fprintf(stderr, "Packet Loss Detected\n");
 		return 1;
+	} else {
+		fprintf(stderr, "myclient ~ recv_server_response(): an error occured while polling socket: %s\n", strerror(errno));
+		return -1;
 	}
+	
+	// else { // after timeout
+	// 	// pthread_mutex_unlock(client->mut);
+	// 	// TODO: retransmit pkt window since we didn't hear back from the server, keep track of retransmits per pkt
+	// 	//		also make sure to update the error message V V V
+	// 	fprintf(stderr, "Packet Loss Detected\n");
+	// 	return 1;
+	// }
 
 	return 0;
 }
@@ -960,8 +975,11 @@ struct server_info *parse_serv_conf(const char *serv_conf_path, int servn) {
 
 			// printf("\n");
 
+			// printf("line: %s\n", line);
+
 			part = strtok_r(line, " ", &part_ref);
-			if (part == NULL) continue;
+			// printf("part:%s:\n", part);
+			// if (part == NULL) continue;
 			if (servers[serv_idx].ip == NULL) {
 				// printf("creating ip\n");
 				servers[serv_idx].ip = calloc(strlen(part) + 1, sizeof(char));
@@ -973,11 +991,32 @@ struct server_info *parse_serv_conf(const char *serv_conf_path, int servn) {
 				}
 				memcpy((void *)servers[serv_idx].ip, part, strlen(part));
 				// printf("ip: %s\n", servers[serv_idx].ip);
-				
+			} else if (servers[serv_idx].port == -1) {
+				// printf("creating port\n");
+				servers[serv_idx].port = atoi(part);
+				if (servers[serv_idx].port <= 0 || servers[serv_idx].port > 65535) {
+					fprintf(stderr, "myclient ~ parse_serv_conf(): invalid port provided in config file: %s\n", part);
+					// TODO: free stuff?
+					close(fd);
+					return NULL;
+				}
+				// printf("port %d\n", servers[serv_idx].port);
+
+				serv_idx ++;
+				if (serv_idx == servn) break;
+			} else {
+				close(fd);
+				return NULL;
 			}
 
 			part = strtok_r(NULL, " ", &part_ref);
-			if (part == NULL) continue;
+			// printf("part:%s:\n", part);
+
+			if (part == NULL) {
+				file_idx += 1;
+				continue;
+			}
+
 			if (servers[serv_idx].port == -1) {
 				// printf("creating port\n");
 				servers[serv_idx].port = atoi(part);
@@ -991,16 +1030,15 @@ struct server_info *parse_serv_conf(const char *serv_conf_path, int servn) {
 
 				serv_idx ++;
 				if (serv_idx == servn) break;
-			}
-
-			part = strtok_r(NULL, " ", &part_ref);
-			if (part != NULL) {
+			} else {
 				close(fd);
 				return NULL;
 			}
 
-			serv_idx ++;
-			if (serv_idx == servn) break;
+			file_idx += 1;
+
+			// serv_idx ++;
+			// if (serv_idx == servn) break;
 
 
 			// for (part = strtok_r(line, " ", &part_ref); part; part = strtok_r(NULL, " \n", &part_ref)) {
@@ -1038,8 +1076,6 @@ struct server_info *parse_serv_conf(const char *serv_conf_path, int servn) {
 			// 		return NULL;
 			// 	}
 			// }
-
-			file_idx += 1;
 		}
 
 		if (serv_idx == servn) break;

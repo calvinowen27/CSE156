@@ -4,52 +4,59 @@ echo "
 !!! RUNNING TEST_MULTIPLE_CLIENTS !!!
 "
 
-./bin/myserver 9090 0 &
-server_pid=$!
+if [ -d out ]; then
+	rm -rf out
+fi
 
-./bin/myclient 127.0.0.1 9090 8192 10 test_files/large_ascii.txt out/large_ascii_out.txt > client1out 2> client1err &
-client1_pid=$!
+./test/run_servers.sh 4 &
+servers=$!
 
-./bin/myclient 127.0.0.1 9090 8192 25 test_files/large_binary.dat out/large_binary_out.dat > client2out 2> client2err &
-client2_pid=$!
+./bin/myclient 3 test_files/test1.conf 1024 10 test_files/small_ascii.txt out/small_ascii_out.txt > client1out 2> client1err &
+client1=$!
 
-./bin/myclient 127.0.0.1 9090 64 5 test_files/small_ascii.txt out/small_ascii_out.txt > client3out 2> client3err
+./bin/myclient 3 test_files/test2.conf 1024 10 test_files/large_binary.dat out/large_binary_out.dat > client2out 2> client2err &
+client2=$!
 
-wait $client1_pid
-wait $client2_pid
+wait $client1
+wait $client2
 
-diff test_files/large_ascii.txt out/large_ascii_out.txt > diff1
-diff test_files/large_binary.dat out/large_binary_out.dat > diff2
-diff test_files/small_ascii.txt out/small_ascii_out.txt > diff3
+diff test_files/small_ascii.txt out/server0_out/out/small_ascii_out.txt > diff00
+diff test_files/small_ascii.txt out/server1_out/out/small_ascii_out.txt > diff01
+diff test_files/small_ascii.txt out/server2_out/out/small_ascii_out.txt > diff02
 
-if [ ! -d out ]; then
+diff test_files/large_binary.dat out/server1_out/out/large_binary_out.dat > diff11
+diff test_files/large_binary.dat out/server2_out/out/large_binary_out.dat > diff12
+diff test_files/large_binary.dat out/server3_out/out/large_binary_out.dat > diff13
+
+if [ ! -d out/server0_out/out ] || [ ! -d out/server1_out/out ] || [ ! -d out/server2_out/out ] || [ ! -d out/server3_out/out ]; then
 	echo "~~~~~~~~~~~~~~~~~~~~~~~
-	TEST FAILURE: out directory not created
+	TEST FAILURE: at least one out directory not created
 ~~~~~~~~~~~~~~~~~~~~~~~"
-	kill -9 $server_pid
-	wait $server_pid &>/dev/null
+	kill -2 $servers
+	wait $servers &>/dev/null
 
-	kill -9 $client1_pid
-	wait $client1_pid &>/dev/null
+	kill -9 $client1
+	wait $client1 &>/dev/null
 
-	kill -9 $client2_pid
-	wait $client2_pid &>/dev/null
+	kill -9 $client2
+	wait $client2 &>/dev/null
 
 	exit 1
 fi
 
-if [ -s diff1 ] || [ -s diff2 ] || [ -s diff3 ]; then
+if [ -s diff00 ] || [ -s diff01 ] || [ -s diff02 ] || [ -s diff11 ] || [ -s diff12 ] || [ -s diff13 ]; then
 	echo "~~~~~~~~~~~~~~~~~~~~~~~
 	TEST FAILURE: at least one client failed to replicate file
 ~~~~~~~~~~~~~~~~~~~~~~~"
-	kill -9 $server_pid
-	wait $server_pid &>/dev/null
 
-	kill -9 $client1_pid
-	wait $client1_pid &>/dev/null
+	kill -2 $servers
+	wait $servers &>/dev/null
 
-	kill -9 $client2_pid
-	wait $client2_pid &>/dev/null
+	kill -9 $client1
+	wait $client1 &>/dev/null
+
+	kill -9 $client2
+	wait $client2 &>/dev/null
 
 	exit 1
 fi
@@ -58,7 +65,13 @@ echo "~~~~~~~~~~~~~~~~~~~~~~~
 	TEST SUCCESS
 ~~~~~~~~~~~~~~~~~~~~~~~"
 
-kill -9 $server_pid
-wait $server_pid &>/dev/null
+kill -2 $servers
+wait $servers &>/dev/null
 
-rm -rf out/ diff1 diff2 diff3
+kill -9 $client1
+wait $client1 &>/dev/null
+
+kill -9 $client2
+wait $client2 &>/dev/null
+
+rm -rf out/server0_out/out out/server1_out/out out/server2_out/out out/server3_out/out diff00 diff01 diff02 diff11 diff12 diff13
