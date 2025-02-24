@@ -67,7 +67,7 @@ int main(int argc, char **argv) {
 		exit(1); // TODO
 	}
 
-	printf("server created with port %d\n", port);
+	// printf("server created with port %d\n", port);
 
 	if (run(server) < 0) {
 		fprintf(stderr,"myserver ~ main(): server failed to receive from socket.\n");
@@ -208,7 +208,7 @@ struct client_info *find_new_client(struct server *server, char *outfile_path, u
 				return NULL;
 			}
 
-			printf("%d: inactive client found: id %u\n", ntohs(((struct sockaddr_in *)&server->serveraddr)->sin_port), id);
+			// printf("%d: inactive client found: id %u\n", ntohs(((struct sockaddr_in *)&server->serveraddr)->sin_port), id);
 			
 			break;
 		}
@@ -554,7 +554,7 @@ int process_write_req(struct server *server, char *pkt_buf) {
 			return -1;
 		}
 		
-		printf("sent client ID: %u\n", client->id);
+		// printf("sent client ID: %u\n", client->id);
 
 		// send ack with client id as sn
 		if (send_client_ack_sn(server, client, client->id) < 0) {

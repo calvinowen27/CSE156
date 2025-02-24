@@ -86,7 +86,7 @@ int main(int argc, char **argv) {
 	for (int i = 0; i < servn; i++) {
 		if (servers[i].ip == NULL || servers[i].port < 0) break;
 
-		printf("server %i:\n\tip: %s\n\tport: %d\n", i, servers[i].ip, servers[i].port);
+		// printf("server %i:\n\tip: %s\n\tport: %d\n", i, servers[i].ip, servers[i].port);
 
 		struct client *client = init_client(infile_path, outfile_path, servers[i], mss, winsz);
 
@@ -135,11 +135,11 @@ int main(int argc, char **argv) {
 			// exit(1); // TODO: check this
 		}
 		
-		printf("thread %d joined\n", i);
+		// printf("thread %d joined\n", i);
 		
 		int ret_code = (int)((intptr_t)ret);
 
-		printf("thread %d exited with code %d\n", i, ret_code);
+		// printf("thread %d exited with code %d\n", i, ret_code);
 
 		if (i == 0) {
 			exit_code = ret_code;
@@ -156,7 +156,7 @@ int main(int argc, char **argv) {
 
 	free(servers);
 
-	printf("exiting with code %d\n", exit_code);
+	// printf("exiting with code %d\n", exit_code);
 	exit(exit_code); // TODO: test this
 	
 	// struct client *client = init_client(infile_path, outfile_path, server, mss, winsz);
@@ -243,7 +243,7 @@ struct client *init_client(const char *infile_path, const char *outfile_path, st
 	client->outfile_path = outfile_path;
 
 	client->server = server;
-	printf("init client with server %s:%d\n", client->server.ip, client->server.port);
+	// printf("init client with server %s:%d\n", client->server.ip, client->server.port);
 
 	// init socket info
 	client->serveraddr_size = sizeof(client->serveraddr);
@@ -403,7 +403,7 @@ int start_handshake(struct client *client) {
 	}
 
 	client->start_sn = (client->id + 1) % client->pkt_count;
-	printf("handshake completed? start_sn set to %u\n", client->start_sn);
+	// printf("handshake completed? start_sn set to %u\n", client->start_sn);
 
 	return 0;
 }
@@ -545,7 +545,7 @@ int send_window_pkts(struct client *client) {
 	int pkts_sent = 0;
 	int bytes_read;
 
-	printf("send_window_pkts(): start sn is %u\n", sn);
+	// printf("send_window_pkts(): start sn is %u\n", sn);
 
 	while ((u_int32_t)pkts_sent < client->winsz && !eof_reached) { // only send max winsz packets
 		memset(pkt_buf, 0, sizeof(pkt_buf));
@@ -765,7 +765,7 @@ int recv_server_response(struct client *client) {
 			// pthread_mutex_unlock(client->mut);
 			// recvfrom success
 			int opcode = get_pkt_opcode(pkt_buf);
-			printf("PACKET RECEIVED\n");
+			// printf("PACKET RECEIVED\n");
 			switch (opcode) {
 				case OP_ACK:
 					ack_sn = get_ack_sn(pkt_buf);	// assign pkt sn to ack_pkt_sn
@@ -848,8 +848,7 @@ int log_pkt_sent(struct client *client, char *pkt_buf) {
 		return -1;
 	}
 
-	printf("(sent: %d) %d-%02d-%02dT%02d:%02d:%02dZ, %s, %u, %u, %u, %u\n", client->thread,
-																	tm->tm_year + 1900,
+	printf("%d-%02d-%02dT%02d:%02d:%02dZ, %s, %u, %u, %u, %u\n", 	tm->tm_year + 1900,
 																	tm->tm_mon + 1,
 																	tm->tm_mday,
 																	tm->tm_hour,
@@ -888,8 +887,7 @@ int log_pkt_recvd(struct client *client, char *pkt_buf) {
 		return -1;
 	}
 
-	printf("(recvd: %d) %d-%02d-%02dT%02d:%02d:%02dZ, %s, %u, %u, %u, %u\n", client->thread,
-																	tm->tm_year + 1900,
+	printf("%d-%02d-%02dT%02d:%02d:%02dZ, %s, %u, %u, %u, %u\n", 	tm->tm_year + 1900,
 																	tm->tm_mon + 1,
 																	tm->tm_mday,
 																	tm->tm_hour,
