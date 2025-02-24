@@ -159,9 +159,10 @@ struct client_info *check_existing_client(struct server *server, char *outfile_p
 		client = &server->clients[id - 1];
 		if (client->outfile_path != NULL && !strcmp(client->outfile_path, new_file_path)) {
 			return client;
-		} else {
-			fprintf(stderr, "PATH CHECK: %s != %s\n", client->outfile_path, new_file_path);
 		}
+		// } else {
+		// 	fprintf(stderr, "PATH CHECK: %s != %s\n", client->outfile_path, new_file_path);
+		// }
 	}
 
 	return NULL;
@@ -467,12 +468,17 @@ u_int32_t get_client_ack_sn(struct client_info *client) {
 // pkt will potentially be dropped
 // return 1 on success, 2 on select timeout, 0 on drop, and -1 on error
 int recv_pkt(struct server *server, char *pkt_buf) {
-	fd_set fds;
-	FD_SET(server->sockfd, &fds);
+	// fd_set fds;
+	// FD_SET(server->sockfd, &fds);
 
-	struct timeval timeout = { LOSS_TIMEOUT_SECS, 0 };
+	// struct timeval timeout = { LOSS_TIMEOUT_SECS, 0 };
 
-	if (select(server->sockfd + 1, &fds, NULL, NULL, &timeout) > 0 && FD_ISSET(server->sockfd, &fds)) { // check there is data to be read from socket
+	struct pollfd fds[1] = { { server->sockfd, POLL_IN, 0 } };
+
+	int poll_res;
+	if ((poll_res = poll(fds, 1, LOSS_TIMEOUT_SECS * 1000)) > 0) {
+
+	// if (select(server->sockfd + 1, &fds, NULL, NULL, &timeout) > 0 && FD_ISSET(server->sockfd, &fds)) { // check there is data to be read from socket
 		// data available at socket
 		// read into buffer
 		if (recvfrom(server->sockfd, pkt_buf, BUFFER_SIZE, 0, &server->clientaddr, &server->clientaddr_size) >= 0) {
@@ -487,6 +493,9 @@ int recv_pkt(struct server *server, char *pkt_buf) {
 			fprintf(stderr, "myserver ~ recv_pkt(): encountered error with recvfrom() call.\n");
 			return -1;
 		}
+	} else if (poll_res < 0) {
+		fprintf(stderr, "myserver ~ recv_pkt(): encountered error polling socket: %s\n", strerror(errno));
+		return -1;
 	} else {
 		return 2;
 	}
@@ -695,9 +704,9 @@ int process_data_pkt(struct server *server, char *pkt_buf) {
 
 	// if we've made it to here, everything is valid and client is writing data to file
 
-	client->ack_sent = false;
-
 	if (pkt_sn == client->expected_sn) { // normal, write bytes to outfile
+		client->ack_sent = false;
+
 		if (pkt->written) {
 			lseek(client->outfd, pkt->file_idx, SEEK_SET);
 		} else {
@@ -724,7 +733,7 @@ int process_data_pkt(struct server *server, char *pkt_buf) {
 	}
 
 	// check if last pkt for fast ACK, instead of waiting for timeout
-	if (pkt_sn == (client->expected_start_sn + client->winsz - 1) % client->pkt_count) {
+	if (pkt_sn == (client->expected_start_sn + client->winsz - 1) % client->pkt_count) {		
 		if (send_client_ack_sn(server, client, pkt_sn) < 0) {
 			fprintf(stderr, "myserver ~ process_data_pkt(): encountered error sending ack to client.\n");
 			return -1;
