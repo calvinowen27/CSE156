@@ -356,7 +356,7 @@ int run(struct server *server) {
 // send pkt to client
 // return 0 on success, -1 on error
 int send_pkt(struct server *server, struct client_info *client, char *pkt_buf, size_t pkt_size) {
-	if (drop_pkt(pkt_buf, &server->pkts_sent, server->droppc)) {
+	if (drop_pkt(server, pkt_buf, &server->pkts_sent, server->droppc)) {
 		return 0;
 	}
 
@@ -483,7 +483,7 @@ int recv_pkt(struct server *server, char *pkt_buf) {
 		// read into buffer
 		if (recvfrom(server->sockfd, pkt_buf, BUFFER_SIZE, 0, &server->clientaddr, &server->clientaddr_size) >= 0) {
 			// pkt dropped
-			if (drop_pkt(pkt_buf, &server->pkts_recvd, server->droppc)) {
+			if (drop_pkt(server, pkt_buf, &server->pkts_recvd, server->droppc)) {
 				return 0;
 			}
 
@@ -794,7 +794,7 @@ int process_ack_pkt(struct server *server, char *pkt_buf) {
 // prints log message if pkt is dropped
 // returns 1 if true, 0 if false
 // int drops = 0;
-int drop_pkt(char *pkt_buf, int *pkt_count, int droppc) {
+int drop_pkt(struct server *server, char *pkt_buf, int *pkt_count, int droppc) {
 
 	int every = 100 / droppc;
 
@@ -815,12 +815,12 @@ int drop_pkt(char *pkt_buf, int *pkt_count, int droppc) {
 
 	u_int32_t opcode = get_pkt_opcode(pkt_buf);
 	if (opcode == 0) {
-		fprintf(stderr, "myserver ~ drop_recvd_pkt(): encountered error getting opcode from pkt.\n");
+		fprintf(stderr, "myserver ~ drop_pkt(): encountered error getting opcode from pkt.\n");
 		return -1;
 	}
 
 	if (opcode < OP_WR || opcode > OP_DATA) {
-		fprintf(stderr, "myserver ~ drop_recvd_pkt(): opcode %u is not supported by server.\n", opcode);
+		fprintf(stderr, "myserver ~ drop_pkt(): opcode %u is not supported by server.\n", opcode);
 		return -1;
 	}
 
@@ -828,11 +828,25 @@ int drop_pkt(char *pkt_buf, int *pkt_count, int droppc) {
 
 	u_int32_t sn = opcode == OP_WR ? 0 : (opcode == OP_ACK ? get_ack_sn(pkt_buf) : get_data_sn(pkt_buf));
 	if (sn == 0 && errno == 1) {
-		fprintf(stderr, "myserver ~ drop_recvd_pkt(): encountered an error getting pkt sn from pkt.\n");
+		fprintf(stderr, "myserver ~ drop_pkt(): encountered an error getting pkt sn from pkt.\n");
 		return -1;
 	}
 
-	printf("%d-%02d-%02dT%02d:%02d:%02dZ, %s, %u\n", tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec, opstring, sn);
+	int lport;
+	struct sockaddr_in sin;
+	socklen_t sinlen = sizeof(sin);
+
+	if (getsockname(server->sockfd, (struct sockaddr*)&sin, &sinlen) == 0) {
+		lport = ntohs(sin.sin_port);
+	} else {
+		fprintf(stderr, "myclient ~ drop_pkt(): encountered error getting local port: %s\n", strerror(errno));
+		return -1;
+	}
+
+	char *rip = inet_ntoa(((struct sockaddr_in *)&server->clientaddr)->sin_addr);
+	int rport = htons(((struct sockaddr_in *)&server->clientaddr)->sin_port);
+
+	printf("%d-%02d-%02dT%02d:%02d:%02dZ, %d, %s, %d, %s, %u\n", tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec, lport, rip, rport, opstring, sn);
 	fflush(stdout);
 
 	return 1;

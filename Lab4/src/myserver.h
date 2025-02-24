@@ -88,6 +88,6 @@ int process_ack_pkt(struct server *server, char *pkt_buf);
 // determines wether to drop a pkt based on pkt_count
 // prints log message if pkt is dropped
 // returns 1 if true, 0 if false
-int drop_pkt(char *pkt_buf, int *pkt_count, int droppc);
+int drop_pkt(struct server *server, char *pkt_buf, int *pkt_count, int droppc);
 
 #endif

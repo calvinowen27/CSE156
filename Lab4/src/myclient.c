@@ -831,12 +831,12 @@ int log_pkt_sent(struct client *client, char *pkt_buf) {
 
 	u_int32_t opcode = get_pkt_opcode(pkt_buf);
 	if (opcode == 0) {
-		fprintf(stderr, "myclient ~ log_pkt(): encountered error getting opcode from pkt.\n");
+		fprintf(stderr, "myclient ~ log_pkt_sent(): encountered error getting opcode from pkt.\n");
 		return -1;
 	}
 
 	if (opcode < OP_WR || opcode > OP_DATA) {
-		fprintf(stderr, "myclient ~ log_pkt(): opcode %u is not supported by server.\n", opcode);
+		fprintf(stderr, "myclient ~ log_pkt_sent(): opcode %u is not supported by server.\n", opcode);
 		return -1;
 	}
 
@@ -844,21 +844,35 @@ int log_pkt_sent(struct client *client, char *pkt_buf) {
 
 	u_int32_t sn = opcode == OP_WR ? get_wr_sn(pkt_buf) : (opcode == OP_ACK ? get_ack_sn(pkt_buf) : get_data_sn(pkt_buf));
 	if (sn == 0 && errno == 1) {
-		fprintf(stderr, "myclient ~ log_pkt(): encountered an error getting pkt sn from pkt.\n");
+		fprintf(stderr, "myclient ~ log_pkt_sent(): encountered an error getting pkt sn from pkt.\n");
 		return -1;
 	}
 
-	printf("%d-%02d-%02dT%02d:%02d:%02dZ, %s, %u, %u, %u, %u\n", 	tm->tm_year + 1900,
-																	tm->tm_mon + 1,
-																	tm->tm_mday,
-																	tm->tm_hour,
-																	tm->tm_min,
-																	tm->tm_sec,
-																	opstring,
-																	sn,
-																	client->start_sn,
-																	(sn + 1) % client->pkt_count,
-																	(client->start_sn + client->winsz) % (client->pkt_count));
+	int lport;
+	struct sockaddr_in sin;
+	socklen_t sinlen = sizeof(sin);
+
+	if (getsockname(client->sockfd, (struct sockaddr*)&sin, &sinlen) == 0) {
+		lport = ntohs(sin.sin_port);
+	} else {
+		fprintf(stderr, "myclient ~ log_pkt_sent(): encountered error getting local port: %s\n", strerror(errno));
+		return -1;
+	}
+
+	printf("%d-%02d-%02dT%02d:%02d:%02dZ, %d, %s, %d, %s, %u, %u, %u, %u\n", 	tm->tm_year + 1900,
+																				tm->tm_mon + 1,
+																				tm->tm_mday,
+																				tm->tm_hour,
+																				tm->tm_min,
+																				tm->tm_sec,
+																				lport,
+																				client->server.ip,
+																				client->server.port,
+																				opstring,
+																				sn,
+																				client->start_sn,
+																				(sn + 1) % client->pkt_count,
+																				(client->start_sn + client->winsz) % (client->pkt_count));
 	// fflush(stdout);
 
 	return 0;
@@ -870,12 +884,12 @@ int log_pkt_recvd(struct client *client, char *pkt_buf) {
 
 	u_int32_t opcode = get_pkt_opcode(pkt_buf);
 	if (opcode == 0) {
-		fprintf(stderr, "myclient ~ log_pkt(): encountered error getting opcode from pkt.\n");
+		fprintf(stderr, "myclient ~ log_pkt_recvd(): encountered error getting opcode from pkt.\n");
 		return -1;
 	}
 
 	if (opcode < OP_WR || opcode > OP_BUSY) {
-		fprintf(stderr, "myclient ~ log_pkt(): opcode %u is not supported by server.\n", opcode);
+		fprintf(stderr, "myclient ~ log_pkt_recvd(): opcode %u is not supported by server.\n", opcode);
 		return -1;
 	}
 
@@ -883,22 +897,36 @@ int log_pkt_recvd(struct client *client, char *pkt_buf) {
 
 	u_int32_t sn = opcode == OP_WR ? get_wr_sn(pkt_buf) : (opcode == OP_ACK ? get_ack_sn(pkt_buf) : 0);
 	if (sn == 0 && errno == 1) {
-		fprintf(stderr, "myclient ~ log_pkt(): encountered an error getting pkt sn from pkt.\n");
+		fprintf(stderr, "myclient ~ log_pkt_recvd(): encountered an error getting pkt sn from pkt.\n");
 		return -1;
 	}
 
-	printf("%d-%02d-%02dT%02d:%02d:%02dZ, %s, %u, %u, %u, %u\n", 	tm->tm_year + 1900,
-																	tm->tm_mon + 1,
-																	tm->tm_mday,
-																	tm->tm_hour,
-																	tm->tm_min,
-																	tm->tm_sec,
-																	opstring,
-																	sn,
-																	client->start_sn,
-																	(sn + 1) % client->pkt_count,
-																	(client->start_sn + client->winsz) % (client->pkt_count));
-	// fflush(stdout);
+	int lport;
+	struct sockaddr_in sin;
+	socklen_t sinlen = sizeof(sin);
+
+	if (getsockname(client->sockfd, (struct sockaddr*)&sin, &sinlen) == 0) {
+		lport = ntohs(sin.sin_port);
+	} else {
+		fprintf(stderr, "myclient ~ log_pkt_recvd(): encountered error getting local port: %s\n", strerror(errno));
+		return -1;
+	}
+
+	printf("%d-%02d-%02dT%02d:%02d:%02dZ, %d, %s, %d, %s, %u, %u, %u, %u\n", 	tm->tm_year + 1900,
+																				tm->tm_mon + 1,
+																				tm->tm_mday,
+																				tm->tm_hour,
+																				tm->tm_min,
+																				tm->tm_sec,
+																				lport,
+																				client->server.ip,
+																				client->server.port,
+																				opstring,
+																				sn,
+																				client->start_sn,
+																				(sn + 1) % client->pkt_count,
+																				(client->start_sn + client->winsz) % (client->pkt_count));
+		// fflush(stdout);
 
 	return 0;
 }
