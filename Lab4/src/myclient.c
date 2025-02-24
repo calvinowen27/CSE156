@@ -754,7 +754,7 @@ int recv_server_response(struct client *client) {
 	struct pollfd fds[1] = { {client->sockfd, POLL_IN, 0 } };
 
 	int poll_res;
-	if ((poll_res = poll(fds, 1, LOSS_TIMEOUT_SECS)) > 0) {
+	if ((poll_res = poll(fds, 1, LOSS_TIMEOUT_SECS * 1000)) > 0) {
 
 	// pthread_mutex_lock(client->mut);
 	// if (select(client->sockfd + 1, &fds, NULL, NULL, &timeout) > 0) { // check there is data to be read from socket
@@ -771,6 +771,11 @@ int recv_server_response(struct client *client) {
 					ack_sn = get_ack_sn(pkt_buf);	// assign pkt sn to ack_pkt_sn
 					if (ack_sn == 0 && errno == 1) {
 						fprintf(stderr, "myclient ~ recv_server_response(): failed to get ACK sn from pkt.\n");
+						return -1;
+					}
+
+					if (log_pkt_recvd(client, pkt_buf) < 0) {
+						fprintf(stderr, "myclient ~ send_window_pkts(): encountered error logging pkt info.\n");
 						return -1;
 					}
 
@@ -793,11 +798,6 @@ int recv_server_response(struct client *client) {
 					return -1;
 					break;
 			};
-
-			if (log_pkt_recvd(client, pkt_buf) < 0) {
-				fprintf(stderr, "myclient ~ send_window_pkts(): encountered error logging pkt info.\n");
-				return -1;
-			}
 		} else { // recvfrom failed
 			// pthread_mutex_unlock(client->mut);
 			fprintf(stderr, "Server is down IP %s port %d\n", client->server.ip, client->server.port);
