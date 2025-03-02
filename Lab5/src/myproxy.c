@@ -9,6 +9,9 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <regex.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <stdint.h>
 
 #include "myproxy.h"
 #include "utils.h"
@@ -17,7 +20,9 @@
 #define MAX_PROCESSES 50
 #define BUFFER_SIZE 4096
 
-static int processes = 0; // TODO: ?
+// static int processes = 0; // TODO: ?
+
+static u_int32_t sig_queue = 0;
 
 void usage(char *exec) {
 	fprintf(stderr,
@@ -35,8 +40,8 @@ void usage(char *exec) {
 }
 
 int main (int argc, char **argv) {
-	signal(SIGCHLD, &sig_handler);
-	signal(SIGINT, &sig_handler);
+	signal(SIGCHLD, &sig_catcher);
+	signal(SIGINT, &sig_catcher);
 
 	int port = 9090; // TODO: check
 	char *forbidden_fp = NULL, *access_log_fp = "access.log";
@@ -93,19 +98,30 @@ int main (int argc, char **argv) {
 		exit(1);
 	}
 
+	// set listen socket to nonblocking
+	// so we can continuously poll signals
+	if (fcntl(listen_fd, F_SETFL, fcntl(listen_fd, F_GETFL, 0) | O_NONBLOCK) < 0) {
+		fprintf(stderr, "myproxy ~ main(): failed to set listen socket non-blocking\n");
+		exit(1);
+	}
+
 	if (listen(listen_fd, 128) < 0) {
 		fprintf(stderr, "myproxy ~ main(): failed to listen on port %d: %s\n", port, strerror(errno));
 		exit(1);
 	}
 
-	// int processes = 0;
+	int processes = 0;
 
 	int connfd;
 	while (1) {
-		if ((connfd = accept(listen_fd, (struct sockaddr *)&sockaddr, &sockaddr_size)) < 0) {
+		handle_sigs(&processes);
+
+		if ((connfd = accept(listen_fd, (struct sockaddr *)&sockaddr, &sockaddr_size)) < 0 && errno != EAGAIN) {
 			fprintf(stderr, "myproxy ~ main(): failed to accept connection on port %d: %s\n", port, strerror(errno));
 			exit(1); // TODO: maybe don't exit? cleanup
 		}
+
+		if (connfd < 0) continue;
 
 		if (processes == MAX_PROCESSES) {
 			fprintf(stderr, "myproxy ~ main(): cannot accept connection, too many processes currently executing.\n");
@@ -116,9 +132,11 @@ int main (int argc, char **argv) {
 			struct connection conn;
 			conn.fd = connfd;
 			handle_connection(conn); // TODO: check error return? probably not, error handling internally
-		}
+		} else {
+			processes ++;
 
-		processes ++;
+			printf("accepted connection, %d processes active\n", processes);
+		}
 	}
 
 	// close files
@@ -129,6 +147,12 @@ int main (int argc, char **argv) {
 }
 
 void handle_connection(struct connection conn) {
+	// make sure connection fd blocks for read
+	if (fcntl(conn.fd, F_SETFL, fcntl(conn.fd, F_GETFL, 0) & ~O_NONBLOCK) < 0) {
+		fprintf(stderr, "myproxy ~ main(): failed to set listen socket non-blocking\n");
+		exit(1);
+	}
+
 	char buf[BUFFER_SIZE + 1];
 	memset(buf, 0, sizeof(buf));
 	// buf[BUFFER_SIZE] = 0; // just for printing, null termination
@@ -147,6 +171,8 @@ void handle_connection(struct connection conn) {
 		exit(1);
 	}
 
+	close(conn.fd);
+
 	exit(0); // terminate process
 }
 
@@ -154,14 +180,24 @@ void reload_forbidden_sites(void) {
 	printf("reloading forbidden sites file !!!!!!!!!!!!!!!\n");
 }
 
-void sig_handler(int sig) {
-	switch (sig) {
-		case SIGCHLD:
-			processes --;
-			printf("child process terminated. active processes: %d\n", processes);
-		break;
-		case SIGINT:
-			reload_forbidden_sites();
-		break;
-	};
+void sig_catcher(int sig) {
+	sig_queue |= (((u_int32_t)1) << (sig - 1));
+}
+
+void handle_sigs(int *processes) {
+	// check each queued signal and process
+	if (sig_queued(SIGINT)) {
+		reload_forbidden_sites();
+	}
+
+	if (sig_queued(SIGCHLD)) {
+		(*processes) --;
+		printf("child process terminated. active processes: %d\n", *processes);
+	}
+
+	sig_queue = 0;
+}
+
+int sig_queued(int sig) {
+	return sig_queue & (((u_int32_t)1) << (sig - 1));
 }
