@@ -114,7 +114,10 @@ int main (int argc, char **argv) {
 
 	int connfd;
 	while (1) {
-		handle_sigs(&processes);
+		if (handle_sigs(&processes) < 0) {
+			fprintf(stderr, "myproxy ~ main(): encountered error handling queued signals.\n");
+			exit(1); // TODO: cleanup?
+		}
 
 		if ((connfd = accept(listen_fd, (struct sockaddr *)&sockaddr, &sockaddr_size)) < 0 && errno != EAGAIN) {
 			fprintf(stderr, "myproxy ~ main(): failed to accept connection on port %d: %s\n", port, strerror(errno));
@@ -176,18 +179,23 @@ void handle_connection(struct connection conn) {
 	exit(0); // terminate process
 }
 
-void reload_forbidden_sites(void) {
+int reload_forbidden_sites(void) {
 	printf("reloading forbidden sites file !!!!!!!!!!!!!!!\n");
+
+	return 0;
 }
 
 void sig_catcher(int sig) {
 	sig_queue |= (((u_int32_t)1) << (sig - 1));
 }
 
-void handle_sigs(int *processes) {
+int handle_sigs(int *processes) {
 	// check each queued signal and process
 	if (sig_queued(SIGINT)) {
-		reload_forbidden_sites();
+		if (reload_forbidden_sites() < 0) {
+			fprintf(stderr, "myproxy ~ handle_sigs(): encountered error reloading forbidden sites file.\n");
+			return -1;
+		}
 	}
 
 	if (sig_queued(SIGCHLD)) {
@@ -196,8 +204,10 @@ void handle_sigs(int *processes) {
 	}
 
 	sig_queue = 0;
+
+	return 0;
 }
 
-int sig_queued(int sig) {
+u_int32_t sig_queued(int sig) {
 	return sig_queue & (((u_int32_t)1) << (sig - 1));
 }
