@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 #include "myproxy.h"
 #include "utils.h"
@@ -19,6 +20,12 @@
 #define OPTIONS "p:a:l:"
 #define MAX_PROCESSES 50
 #define BUFFER_SIZE 4096
+#define NUM_FBDN_IPS 1000
+
+// #define IP_REGEX "(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[0-9][0-9]|[0-9]\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[0-9][0-9]|[0-9])\n+"
+#define IP_REGEX "(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])(\n+)"
+// #define IP_REGEX "^([0-9])$"
+// #define IP_REGEX "^((25[0-5]))$"
 
 // static int processes = 0; // TODO: ?
 
@@ -76,9 +83,15 @@ int main (int argc, char **argv) {
 	}
 
 	// open files
-	int fbdn_fd = open(forbidden_fp, O_RDONLY, 0700);
-	if (fbdn_fd < 0) {
-		fprintf(stderr, "myproxy ~ main(): encountered error opening forbidden sites file %s: %s\n", forbidden_fp, strerror(errno));
+	// int fbdn_fd = open(forbidden_fp, O_RDONLY, 0700);
+	// if (fbdn_fd < 0) {
+	// 	fprintf(stderr, "myproxy ~ main(): encountered error opening forbidden sites file %s: %s\n", forbidden_fp, strerror(errno));
+	// 	exit(1);
+	// }
+
+	char *forbidden_ips[NUM_FBDN_IPS] = { NULL };
+	if (load_forbidden_ips(forbidden_fp, forbidden_ips) < 0) {
+		fprintf(stderr, "myproxy ~ main(): failed to load forbidden_ips from file: %s\n", forbidden_fp);
 		exit(1);
 	}
 
@@ -114,7 +127,7 @@ int main (int argc, char **argv) {
 
 	int connfd;
 	while (1) {
-		if (handle_sigs(&processes) < 0) {
+		if (handle_sigs(&processes, forbidden_fp, forbidden_ips) < 0) {
 			fprintf(stderr, "myproxy ~ main(): encountered error handling queued signals.\n");
 			exit(1); // TODO: cleanup?
 		}
@@ -131,6 +144,7 @@ int main (int argc, char **argv) {
 			continue; // TODO: check?
 		}
 
+		// TODO: map child pid to connection ip
 		if (fork() == 0) {
 			struct connection conn;
 			conn.fd = connfd;
@@ -143,7 +157,7 @@ int main (int argc, char **argv) {
 	}
 
 	// close files
-	close(fbdn_fd);
+	// close(fbdn_fd);
 	close(log_fd);
 
 	return 0;
@@ -189,10 +203,10 @@ void sig_catcher(int sig) {
 	sig_queue |= (((u_int32_t)1) << (sig - 1));
 }
 
-int handle_sigs(int *processes) {
+int handle_sigs(int *processes, const char *forbidden_fp, char **forbidden_ips) {
 	// check each queued signal and process
 	if (sig_queued(SIGINT)) {
-		if (reload_forbidden_sites() < 0) {
+		if (load_forbidden_ips(forbidden_fp, forbidden_ips) < 0) {
 			fprintf(stderr, "myproxy ~ handle_sigs(): encountered error reloading forbidden sites file.\n");
 			return -1;
 		}
@@ -210,4 +224,127 @@ int handle_sigs(int *processes) {
 
 u_int32_t sig_queued(int sig) {
 	return sig_queue & (((u_int32_t)1) << (sig - 1));
+}
+
+int load_forbidden_ips(const char *forbidden_fp, char **forbidden_ips) {
+	// reset array
+	for (int i = 0; i < NUM_FBDN_IPS; i++) {
+		if (forbidden_ips[i] != NULL) free(forbidden_ips[i]);
+		forbidden_ips[i] = NULL;
+	}
+
+	int fd = open(forbidden_fp, O_RDONLY, 0700);
+	if (fd < 0) {
+		fprintf(stderr, "myproxy ~ load_forbidden_ips(): failed to open forbidden sites file path %s: %s\n", forbidden_fp, strerror(errno));
+		return -1;
+	}
+
+	// read by line
+	// check for valid ip or url
+	// url --> resolve to ip
+	// add to array
+
+	char buf[65] = { 0 }, *line;
+	off_t off = 0;
+	int read_res, reg_res, ip_idx = 0;
+
+	bool comment_line = false, new_buf;
+
+	regex_t regex;
+	regmatch_t pmatch;
+
+	if (regcomp(&regex, IP_REGEX, REG_EXTENDED) < 0) {
+		fprintf(stderr, "myproxy ~ load_forbidden_ips(): failed to compile regex for ip matching: %s\n", strerror(errno));
+		close(fd);
+		return -1;
+	}
+	
+	while ((read_res = read(fd, buf, sizeof(buf) - 1)) > 0) {
+		new_buf = true;
+
+		for (line = strtok(buf, "\n"); line; line = strtok(NULL, "\n")) {
+			printf("line: %s\n", line);
+			char tline[strlen(line) + 2];
+			strcpy(tline, line);
+			tline[strlen(line)] = '\n';
+			tline[strlen(line) + 1] = 0;
+			
+			// printf("tline: %s\n", tline);
+
+			off += strlen(line);
+
+			if (comment_line) {
+				// printf("comment line");
+				comment_line = new_buf;
+				new_buf = false;
+				if (comment_line) {
+					// printf("\n");
+					continue;
+				}
+
+				// printf(" end\n");
+			}
+
+			new_buf = false;
+
+			if (tline[0] == '#') {
+				// printf("comment line start\n");
+				comment_line = true;
+				continue;
+			}
+			
+			if ((reg_res = regexec(&regex, tline, 1, &pmatch, REG_EXTENDED)) != 0) {
+				if (reg_res == REG_NOMATCH) {
+					break;
+				} else {
+					char errbuf[65] = { 0 };
+					regerror(reg_res, &regex, errbuf, sizeof(errbuf) - 1);
+					printf("%s\n", IP_REGEX);
+					fprintf(stderr, "myproxy ~ load_forbidden_ips(): failed to execute regex for ip matching %d: %s\n", reg_res, errbuf);
+					close(fd);
+					return -1;
+				}
+			}
+
+			off += 1;
+
+			// printf("%lld\n", pmatch[0].rm_so);
+
+			// printf("valid ip found: %s", tline + pmatch[0].rm_so);
+			forbidden_ips[ip_idx] = calloc(pmatch.rm_eo - pmatch.rm_so, sizeof(char));
+			memcpy(forbidden_ips[ip_idx], tline + pmatch.rm_so, (pmatch.rm_eo - pmatch.rm_so) - 1);
+			ip_idx ++;
+			if (ip_idx == NUM_FBDN_IPS) {
+				fprintf(stderr, "myproxy ~ load_forbidden_ips(): cannot load another ip from file, array full.\n");
+				return -1;
+			}
+			// for (int i = 0; i < 5; i++) {
+			// 	char tmp[(pmatch[i].rm_eo - pmatch[i].rm_so) + 1];
+			// 	tmp[sizeof(tmp) - 1] = 0;
+			// 	memcpy(tmp, tline + pmatch[i].rm_so, sizeof(tmp) - 1);
+			// 	printf("\t%s\n", tmp);
+			// 	printf("\t\t%d\n", atoi(tmp));
+			// }
+		}
+
+		lseek(fd, off, SEEK_SET);
+
+		memset(buf, 0, sizeof(buf));
+	}
+
+	if (read_res < 0) {
+		fprintf(stderr, "myproxy ~ load_forbidden_ips(): encountered error reading from file %s: %s\n", forbidden_fp, strerror(errno));
+		close(fd);
+		return -1;
+	}
+
+	close(fd);
+
+	printf("all forbidden ips loaded:\n");
+	for (int i = 0; i < NUM_FBDN_IPS; i++) {
+		if (forbidden_ips[i] == NULL) break;
+		printf("\t%s\n", forbidden_ips[i]);
+	}
+
+	return 0;
 }
