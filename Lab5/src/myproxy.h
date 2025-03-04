@@ -8,11 +8,11 @@ struct connection {
 void usage(char *exec);
 
 void sig_catcher(int sig);
-int handle_sigs(int *processes, const char *forbidden_fp, char **forbidden_ips);
+int handle_sigs(int *processes, const char *forbidden_fp, struct addrinfo **forbidden_addrs);
 u_int32_t sig_queued(int sig);
 
 void handle_connection(struct connection conn);
 
-int load_forbidden_ips(const char *forbidden_fp, char **forbidden_ips);
+int load_forbidden_ips(const char *forbidden_fp, struct addrinfo **forbidden_addrs);
 
 #endif
