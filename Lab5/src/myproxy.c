@@ -19,14 +19,6 @@
 #include "myproxy.h"
 #include "utils.h"
 
-#define OPTIONS "p:a:l:"
-#define MAX_PROCESSES 50
-#define BUFFER_SIZE 4096
-#define NUM_FBDN_IPS 1000
-
-#define IP_REGEX "(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])(\n+)"
-#define DOMAIN_REGEX "(([a-zA-Z0-9\\-_])+)((\\.[a-zA-Z0-9\\-_]+)+)(\n+)"
-
 static u_int32_t sig_queue = 0;
 
 void usage(char *exec) {
@@ -181,6 +173,15 @@ void handle_connection(struct connection conn) {
 		memset(buf, 0, sizeof(buf));
 	}
 
+	// read header into buffer and parse fields
+	// resolve hostname and get ip
+	// connect to ip using SSL
+	// while connection alive
+		// forward packet to server
+		// wait for response and decrypt
+		// forward packet to client
+
+
 	if (res < 0) {
 		fprintf(stderr, "myproxy ~ handle_connection(): encountered error reading from connection: %s\n", strerror(errno));
 		exit(1);
@@ -242,7 +243,7 @@ int load_forbidden_ips(const char *forbidden_fp, struct addrinfo **forbidden_add
 	// url --> resolve to ip
 	// add to array
 
-	char buf[65] = { 0 }, *line;
+	char buf[257] = { 0 }, *line;
 	off_t off = 0;
 	int read_res, reg_res, addr_idx = 0;
 	size_t line_idx = 0;
