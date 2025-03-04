@@ -245,6 +245,7 @@ int load_forbidden_ips(const char *forbidden_fp, struct addrinfo **forbidden_add
 	char buf[65] = { 0 }, *line;
 	off_t off = 0;
 	int read_res, reg_res, addr_idx = 0;
+	size_t line_idx = 0;
 
 	bool comment_line = false, new_buf;
 
@@ -265,6 +266,7 @@ int load_forbidden_ips(const char *forbidden_fp, struct addrinfo **forbidden_add
 	
 	while ((read_res = read(fd, buf, sizeof(buf) - 1)) > 0) {
 		new_buf = true;
+		line_idx = 0;
 
 		for (line = strtok(buf, "\n"); line; line = strtok(NULL, "\n")) {
 			// printf("line: %s\n", line);
@@ -275,6 +277,10 @@ int load_forbidden_ips(const char *forbidden_fp, struct addrinfo **forbidden_add
 			
 			// printf("tline: %s\n", tline);
 
+			line_idx += strlen(tline);
+			// printf("%zu\n\n", line_idx);
+			if (strlen(tline) != line_idx && line_idx >= sizeof(buf) - 1) break;
+			
 			off += strlen(line);
 
 			if (comment_line) {
@@ -325,6 +331,8 @@ int load_forbidden_ips(const char *forbidden_fp, struct addrinfo **forbidden_add
 				}
 			}
 
+			// line_idx += 1;
+			// printf("%zu\n", line_idx);
 			off += 1;
 
 			char *hostname = calloc(pmatch.rm_eo - pmatch.rm_so, sizeof(char));
@@ -344,17 +352,27 @@ int load_forbidden_ips(const char *forbidden_fp, struct addrinfo **forbidden_add
 				return -1;
 			}
 
+			if (res != NULL) {	
+				u_int8_t *bytes = split_bytes((u_int32_t)((struct sockaddr_in *)res->ai_addr)->sin_addr.s_addr);
+
+				printf("%u.%u.%u.%u\n", bytes[3], bytes[2], bytes[1], bytes[0]);
+
+				free(bytes);
+
+				struct addrinfo *addr = malloc(sizeof(struct addrinfo));
+				memcpy(addr, res, sizeof(struct addrinfo));
+
+				forbidden_addrs[addr_idx] = addr;
+				addr_idx ++;
+				if (addr_idx == NUM_FBDN_IPS) {
+					fprintf(stderr, "myproxy ~ load_forbidden_ips(): cannot load another ip from file, array full.\n");
+					return -1;
+				}
+			}
+
 			free(hostname);
 
-			struct addrinfo *addr = malloc(sizeof(struct addrinfo));
-			memcpy(addr, res, sizeof(struct addrinfo));
-
-			forbidden_addrs[addr_idx] = addr;
-			addr_idx ++;
-			if (addr_idx == NUM_FBDN_IPS) {
-				fprintf(stderr, "myproxy ~ load_forbidden_ips(): cannot load another ip from file, array full.\n");
-				return -1;
-			}
+			break;
 		}
 
 		lseek(fd, off, SEEK_SET);
