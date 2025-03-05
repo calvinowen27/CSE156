@@ -138,7 +138,7 @@ int main (int argc, char **argv) {
 		if (fork() == 0) {
 			struct connection conn;
 			conn.fd = connfd;
-			handle_connection(conn); // TODO: check error return? probably not, error handling internally
+			handle_connection(conn, forbidden_addrs); // TODO: check error return? probably not, error handling internally
 		} else {
 			processes ++;
 
@@ -153,7 +153,7 @@ int main (int argc, char **argv) {
 	return 0;
 }
 
-void handle_connection(struct connection conn) {
+void handle_connection(struct connection conn, struct addrinfo **forbidden_addrs) {
 	// make sure connection fd blocks for read
 	if (fcntl(conn.fd, F_SETFL, fcntl(conn.fd, F_GETFL, 0) & ~O_NONBLOCK) < 0) {
 		fprintf(stderr, "myproxy ~ main(): failed to set listen socket non-blocking\n");
@@ -186,7 +186,7 @@ void handle_connection(struct connection conn) {
 
 	printf("buf: %s\n", buf);
 
-	regmatch_t pmatch[15];
+	regmatch_t pmatch[4];
 
 	char *pkt_header = calloc(BUFFER_SIZE, sizeof(char));
 	if (pkt_header == NULL) {
@@ -194,7 +194,7 @@ void handle_connection(struct connection conn) {
 		exit(1);
 	}
 
-	if ((reg_res = regexec(&reg, buf, 15, pmatch, REG_EXTENDED)) != 0) {
+	if ((reg_res = regexec(&reg, buf, 4, pmatch, 0)) != 0) {
 		fprintf(stderr, "myproxy ~ handle_connection(): regex() failed for request line.\n");
 
 		if (reg_res != REG_NOMATCH) {	
@@ -227,7 +227,60 @@ void handle_connection(struct connection conn) {
 
 	printf("version: %s\n", version);
 
-	(void)prev_end;
+	prev_end = pmatch[0].rm_eo;
+
+	if (append_buf(&pkt_header, BUFFER_SIZE, buf + pmatch[0].rm_so, pmatch[0].rm_eo - pmatch[0].rm_so) < 0) {
+		fprintf(stderr, "myproxy ~ handle_connection(): failed to append request line to header buffer.\n");
+		exit(1);
+	}
+
+	if (regcomp(&reg, HEADER_FIELD_REGEX, REG_EXTENDED) < 0) {
+		fprintf(stderr, "myproxy ~ handle_connection(): regcomp() failed for header fields.\n");
+		exit(1);
+	}
+
+	printf("header fields:\n");
+
+	struct addrinfo *hostaddr = NULL;
+
+	while ((reg_res = regexec(&reg, buf + prev_end, 3, pmatch, 0)) == 0) {
+		char key[(pmatch[1].rm_eo - pmatch[1].rm_so) + 1];
+		key[sizeof(key) - 1] = 0;
+		memcpy(key, buf + prev_end + pmatch[1].rm_so, sizeof(key) - 1);
+
+		char val[(pmatch[2].rm_eo - pmatch[2].rm_so) + 1];
+		val[sizeof(val) - 1] = 0;
+		memcpy(val, buf + prev_end + pmatch[2].rm_so, sizeof(val) - 1);
+
+		printf("\t%s: %s\n", key, val);
+
+		if (append_buf(&pkt_header, BUFFER_SIZE, buf + prev_end + pmatch[0].rm_so, pmatch[0].rm_eo - pmatch[0].rm_so) < 0) {
+			fprintf(stderr, "myproxy ~ handle_connection(): failed to append header field to header buffer.\n");
+			exit(1);
+		}
+
+		if (!strcmp("Host", key)) {
+			if (resolve_host(val, &hostaddr) < 0) {
+				fprintf(stderr, "myproxy ~ handle_connection(): failed to resolve host.\n");
+				exit(1);
+			}
+
+			if (host_forbidden(hostaddr, forbidden_addrs)) {
+				printf("FORBIDDEN HOST!\n");
+			} else {
+				printf("ALLOWED HOST\n");
+			}
+		}
+
+		prev_end += pmatch[0].rm_eo;
+	}
+
+	if (reg_res != REG_NOMATCH) {
+		fprintf(stderr, "myproxy ~ handle_connection(): regexec() failed for header fields.\n");
+		exit(1);
+	}
+
+	printf("\nHEADER:\n==========\n%s\n", pkt_header);
 
 	// read header into buffer and parse fields
 	// resolve hostname and get ip
@@ -240,13 +293,66 @@ void handle_connection(struct connection conn) {
 
 	free(pkt_header);
 
+	regfree(&reg);
+
 	close(conn.fd);
 
 	exit(0); // terminate process
 }
 
-int reload_forbidden_sites(void) {
-	printf("reloading forbidden sites file !!!!!!!!!!!!!!!\n");
+int resolve_host(char *hostname, struct addrinfo **res) {
+	struct addrinfo hints;
+
+	// double check these
+	hints.ai_family = PF_INET;
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_protocol = IPPROTO_TCP;
+	hints.ai_flags = AI_DEFAULT;
+
+	printf("resolving hostname %s\n", hostname);
+	if (getaddrinfo(hostname, NULL, &hints, res) < 0) {
+		fprintf(stderr, "myproxy ~ load_forbidden_ips(): failed to resolve hostname %s\n", hostname);
+		return -1;
+	}
+
+	return 0;
+}
+
+int host_forbidden(struct addrinfo *host, struct addrinfo **forbidden_addrs) {
+	printf("checking forbidden host\n");
+
+	if (host == NULL) {
+		fprintf(stderr, "myproxy ~ host_forbidden(): host ptr is NULL.\n");
+		return -1;
+	}
+
+	if (forbidden_addrs == NULL) {
+		fprintf(stderr, "myproxy ~ host_forbidden(): forbidden_addrs is NULL.\n");
+		return -1;
+	}
+
+	struct addrinfo *addr;
+	for (int i = 0; i < NUM_FBDN_IPS; i++) {
+		addr = forbidden_addrs[i];
+
+		// printf("forbidden_addr[%d] is %s null\n", i, addr == NULL ? "" : "not");
+
+		if (addr == NULL) break;
+
+		do {
+			// printf("do\n");
+			if (sockaddrs_eq(*addr->ai_addr, *host->ai_addr)) {
+				// printf("equal\n");
+				return 1;
+			}
+
+			// printf("sockaddr not equal\n");
+
+			addr = addr->ai_next;
+		} while (addr != NULL);
+
+		// printf("ok\n");
+	}
 
 	return 0;
 }
@@ -392,18 +498,11 @@ int load_forbidden_ips(const char *forbidden_fp, struct addrinfo **forbidden_add
 			char *hostname = calloc(pmatch.rm_eo - pmatch.rm_so, sizeof(char));
 			memcpy(hostname, tline + pmatch.rm_so, (pmatch.rm_eo - pmatch.rm_so) - 1);
 
-			struct addrinfo *res, hints;
+			struct addrinfo *res = NULL;
 
-			// double check these
-			hints.ai_family = PF_INET;
-			hints.ai_socktype = SOCK_STREAM;
-			hints.ai_protocol = IPPROTO_TCP;
-			hints.ai_flags = AI_DEFAULT;
-
-			printf("resolving hostname %s\n", hostname);
-			if (getaddrinfo(hostname, NULL, &hints, &res) < 0) {
-				fprintf(stderr, "myproxy ~ load_forbidden_ips(): failed to resolve hostname %s\n", hostname);
-				return -1;
+			if (resolve_host(hostname, &res) < 0) {
+				fprintf(stderr, "myproxy ~ handle_connection(): failed to resolve host.\n");
+				exit(1);
 			}
 
 			if (res != NULL) {	

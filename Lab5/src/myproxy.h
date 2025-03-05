@@ -34,7 +34,10 @@ void sig_catcher(int sig);
 int handle_sigs(int *processes, const char *forbidden_fp, struct addrinfo **forbidden_addrs);
 u_int32_t sig_queued(int sig);
 
-void handle_connection(struct connection conn);
+void handle_connection(struct connection conn, struct addrinfo **forbidden_addrs);
+
+int resolve_host(char *hostname, struct addrinfo **res);
+int host_forbidden(struct addrinfo *host, struct addrinfo **forbidden_addrs);
 
 int load_forbidden_ips(const char *forbidden_fp, struct addrinfo **forbidden_addrs);
 

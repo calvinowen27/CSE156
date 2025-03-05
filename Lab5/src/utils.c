@@ -136,7 +136,7 @@ int append_buf(char **buf, size_t buf_size, char *addtl, size_t addtl_size) {
 
 	memset((*buf) + strlen(*buf), 0, buf_size - strlen(*buf));
 
-	memcpy(*buf, addtl, addtl_size);
+	memcpy((*buf) + strlen(*buf), addtl, addtl_size);
 
 	return 0;
 }
