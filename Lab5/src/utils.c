@@ -10,6 +10,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <regex.h>
+#include <poll.h>
 
 #include "utils.h"
 
@@ -43,12 +44,21 @@ int read_n_bytes(int fd, char *buf, int n) {
 	int offset = 0;
 	int bytes_read = 0;
 
-	while (offset < n && (bytes_read = read(fd, buf + offset, n - offset)) > 0) {
+	struct pollfd fds[1] = { {fd, POLLIN, 0 } };
+
+	int poll_res;
+	while (offset < n && (poll_res = poll(fds, 1, 0)) > 0 && (bytes_read = read(fd, buf + offset, n - offset)) > 0) {
 		offset += bytes_read;
 	}
 
 	if (bytes_read < 0) {
 		fprintf(stderr, "read_n_bytes(): read() failed\n");
+		fprintf(stderr, "%s\n", strerror(errno));
+		return -1;
+	}
+
+	if (poll_res < 0) {
+		fprintf(stderr, "read_n_bytes(): poll() failed\n");
 		fprintf(stderr, "%s\n", strerror(errno));
 		return -1;
 	}
@@ -111,6 +121,22 @@ int pass_n_bytes(int infd, int outfd, int n) {
 		fprintf(stderr, "pass_n_bytes(): bytes read does not equal n\n");
 		return -1;
 	}
+
+	return 0;
+}
+
+int append_buf(char **buf, size_t buf_size, char *addtl, size_t addtl_size) {
+	if (strlen(*buf) + addtl_size > buf_size) {
+		(*buf) = realloc(*buf, strlen(*buf) + addtl_size);
+		if (*buf == NULL) {
+			fprintf(stderr, "append_buf(): failed to reallocate buffer\n");
+			return -1;
+		}
+	}
+
+	memset((*buf) + strlen(*buf), 0, buf_size - strlen(*buf));
+
+	memcpy(*buf, addtl, addtl_size);
 
 	return 0;
 }

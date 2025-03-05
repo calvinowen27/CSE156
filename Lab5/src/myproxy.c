@@ -160,32 +160,85 @@ void handle_connection(struct connection conn) {
 		exit(1);
 	}
 
-	char buf[BUFFER_SIZE + 1];
-	memset(buf, 0, sizeof(buf));
+	char buf[BUFFER_SIZE] = { 0 };
+	// memset(buf, 0, sizeof(buf));
 	// buf[BUFFER_SIZE] = 0; // just for printing, null termination
 
-	int res;
-
 	// just read and print
-	while ((res = read(conn.fd, buf, sizeof(buf))) > 0) {
-		printf("%s", buf);
+	// while ((res = read(conn.fd, buf, sizeof(buf))) > 0) {
+	// 	printf("%s", buf);
 
-		memset(buf, 0, sizeof(buf));
+	// 	memset(buf, 0, sizeof(buf));
+	// }
+
+	int reg_res, prev_end = 0;
+	regex_t reg;
+
+	if ((reg_res = regcomp(&reg, REQLN_REGEX, REG_EXTENDED)) != 0) {
+		fprintf(stderr, "myproxy ~ handle_connection(): regcomp() failed for request line.\n");
+		exit(1);
 	}
+
+	if (read_n_bytes(conn.fd, buf, sizeof(buf)) < 0) {
+		fprintf(stderr, "myproxy ~ handle_connection(): failed to read_n_bytes() from connection fd.\n");
+		exit(1);
+	}
+
+	printf("buf: %s\n", buf);
+
+	regmatch_t pmatch[15];
+
+	char *pkt_header = calloc(BUFFER_SIZE, sizeof(char));
+	if (pkt_header == NULL) {
+		fprintf(stderr, "myproxy ~ handle_connection(): failed to allocate pkt_header buffer.\n");
+		exit(1);
+	}
+
+	if ((reg_res = regexec(&reg, buf, 15, pmatch, REG_EXTENDED)) != 0) {
+		fprintf(stderr, "myproxy ~ handle_connection(): regex() failed for request line.\n");
+
+		if (reg_res != REG_NOMATCH) {	
+			exit(1);
+		}
+	}
+
+	if (reg_res == REG_NOMATCH) {
+		fprintf(stderr, "myproxy ~ handle_connection(): didn't find match for request line...\n");
+		exit(1);
+	}
+
+	prev_end = pmatch[0].rm_eo;
+
+	char method[(pmatch[1].rm_eo - pmatch[1].rm_so) + 1];
+	method[sizeof(method) - 1] = 0;
+	memcpy(method, buf + pmatch[1].rm_so, sizeof(method) - 1);
+
+	printf("method: %s\n", method);
+
+	char url[(pmatch[2].rm_eo - pmatch[2].rm_so) + 1];
+	url[sizeof(url) - 1] = 0;
+	memcpy(url, buf + pmatch[2].rm_so, sizeof(url) - 1);
+
+	printf("url: %s\n", url);
+
+	char version[(pmatch[3].rm_eo - pmatch[3].rm_so) + 1];
+	version[sizeof(version) - 1] = 0;
+	memcpy(version, buf + pmatch[3].rm_so, sizeof(version) - 1);
+
+	printf("version: %s\n", version);
+
+	(void)prev_end;
 
 	// read header into buffer and parse fields
 	// resolve hostname and get ip
+	// check if forbidden
 	// connect to ip using SSL
 	// while connection alive
 		// forward packet to server
 		// wait for response and decrypt
 		// forward packet to client
 
-
-	if (res < 0) {
-		fprintf(stderr, "myproxy ~ handle_connection(): encountered error reading from connection: %s\n", strerror(errno));
-		exit(1);
-	}
+	free(pkt_header);
 
 	close(conn.fd);
 
@@ -387,6 +440,8 @@ int load_forbidden_ips(const char *forbidden_fp, struct addrinfo **forbidden_add
 		return -1;
 	}
 
+	regfree(&ip_regex);
+	regfree(&domain_regex);
 	close(fd);
 
 	// printf("all forbidden ips loaded:\n");

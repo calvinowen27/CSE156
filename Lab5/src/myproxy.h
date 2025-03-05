@@ -9,19 +9,20 @@
 #define HTTPS_PORT 443
 
 #define IP_REGEX "(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])(\n+)"
-#define DOMAIN_REGEX "(([a-zA-Z0-9\\-_])+)((\\.[a-zA-Z0-9\\-_]+)+)(\n+)"
+#define DOMAIN_REGEX "(([a-zA-Z0-9\\-_])+)((\\.[a-zA-Z0-9\\-_/]+)+)(\n+)"
 
-#define METHOD_REGEX	"([A-Z]{3,8})"
-#define URL_REGEX 		"/([a-zA-Z0-9.-]{1,63})"
+#define EMPTY_LINE "\r\n"
+#define DOUBLE_EMPTY_LINE EMPTY_LINE EMPTY_LINE
+
+#define METHOD_REGEX	"([a-zA-Z]{3,8})"
+// #define URL_REGEX 		"(((http|https)://)?(([a-zA-Z0-9\\-_])+)((\\.[a-zA-Z0-9\\-_/]+)+))"
+#define URL_REGEX		"([a-zA-Z0-9\\-_/:?\\.]+)"
 #define VERSION_REGEX	"(HTTP/[0-9].[0-9])"
 #define REQLN_REGEX		METHOD_REGEX " " URL_REGEX " " VERSION_REGEX EMPTY_LINE
 
 #define HKEY_REGEX			"([a-zA-Z0-9.-]{1,128})"
 #define HVAL_REGEX			"([ -~]{1,128})"
 #define HEADER_FIELD_REGEX	HKEY_REGEX ": " HVAL_REGEX EMPTY_LINE
-
-#define EMPTY_LINE "\r\n"
-#define DOUBLE_EMPTY_LINE EMPTY_LINE EMPTY_LINE
 
 struct connection {
 	int fd;
