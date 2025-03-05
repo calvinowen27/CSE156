@@ -276,7 +276,10 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 			}
 
 			if (host_forbidden(hostaddr, forbidden_addrs)) {
-				printf("FORBIDDEN HOST!\n");
+				if (send_response(conn, 403) < 0) {
+					fprintf(stderr, "myproxy ~ handle_connection(): failed to send response with status code 403.\n");
+					close_connection(conn, 1);
+				}
 				close_connection(conn, 2);
 			}
 		}
@@ -293,7 +296,7 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 	printf("\nHEADER:\n==========\n%s\n", conn->pkt_header);
 
 	if (send_response(conn, 501) < 0) {
-		fprintf(stderr, "myproxy ~ handle_connection(): failed to send response with status code %d.\n", 501);
+		fprintf(stderr, "myproxy ~ handle_connection(): failed to send response with status code 501.\n");
 		close_connection(conn, 1);
 	}
 
@@ -323,6 +326,9 @@ int send_response(struct connection *conn, int status_code) {
 	char *stat_phrase = NULL;
 
 	switch (status_code) {
+		case 403:
+			stat_phrase = "Forbidden";
+		break;
 		case 501:
 			stat_phrase = "Not Implemented";
 		break;
