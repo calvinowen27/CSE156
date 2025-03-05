@@ -138,7 +138,8 @@ int main (int argc, char **argv) {
 		if (fork() == 0) {
 			struct connection conn;
 			conn.fd = connfd;
-			handle_connection(conn, forbidden_addrs); // TODO: check error return? probably not, error handling internally
+			conn.pkt_header = NULL;
+			handle_connection(&conn, forbidden_addrs); // TODO: check error return? probably not, error handling internally
 		} else {
 			processes ++;
 
@@ -153,11 +154,12 @@ int main (int argc, char **argv) {
 	return 0;
 }
 
-void handle_connection(struct connection conn, struct addrinfo **forbidden_addrs) {
+void handle_connection(struct connection *conn, struct addrinfo **forbidden_addrs) {
 	// make sure connection fd blocks for read
-	if (fcntl(conn.fd, F_SETFL, fcntl(conn.fd, F_GETFL, 0) & ~O_NONBLOCK) < 0) {
+	if (fcntl(conn->fd, F_SETFL, fcntl(conn->fd, F_GETFL, 0) & ~O_NONBLOCK) < 0) {
 		fprintf(stderr, "myproxy ~ main(): failed to set listen socket non-blocking\n");
-		exit(1);
+		close_connection(conn, 1);
+		// exit(1);
 	}
 
 	char buf[BUFFER_SIZE] = { 0 };
@@ -172,39 +174,43 @@ void handle_connection(struct connection conn, struct addrinfo **forbidden_addrs
 	// }
 
 	int reg_res, prev_end = 0;
-	regex_t reg;
 
-	if ((reg_res = regcomp(&reg, REQLN_REGEX, REG_EXTENDED)) != 0) {
+	if ((reg_res = regcomp(&conn->reg, REQLN_REGEX, REG_EXTENDED)) != 0) {
 		fprintf(stderr, "myproxy ~ handle_connection(): regcomp() failed for request line.\n");
-		exit(1);
+		close_connection(conn, 1);
+		// exit(1);
 	}
 
-	if (read_n_bytes(conn.fd, buf, sizeof(buf)) < 0) {
+	if (read_n_bytes(conn->fd, buf, sizeof(buf)) < 0) {
 		fprintf(stderr, "myproxy ~ handle_connection(): failed to read_n_bytes() from connection fd.\n");
-		exit(1);
+		close_connection(conn, 1);
+		// exit(1);
 	}
 
 	printf("buf: %s\n", buf);
 
 	regmatch_t pmatch[4];
 
-	char *pkt_header = calloc(BUFFER_SIZE, sizeof(char));
-	if (pkt_header == NULL) {
+	conn->pkt_header = calloc(BUFFER_SIZE, sizeof(char));
+	if (conn->pkt_header == NULL) {
 		fprintf(stderr, "myproxy ~ handle_connection(): failed to allocate pkt_header buffer.\n");
-		exit(1);
+		close_connection(conn, 1);
+		// exit(1);
 	}
 
-	if ((reg_res = regexec(&reg, buf, 4, pmatch, 0)) != 0) {
+	if ((reg_res = regexec(&conn->reg, buf, 4, pmatch, 0)) != 0) {
 		fprintf(stderr, "myproxy ~ handle_connection(): regex() failed for request line.\n");
 
 		if (reg_res != REG_NOMATCH) {	
-			exit(1);
+		close_connection(conn, 1);
+		// exit(1);
 		}
 	}
 
 	if (reg_res == REG_NOMATCH) {
 		fprintf(stderr, "myproxy ~ handle_connection(): didn't find match for request line...\n");
-		exit(1);
+		close_connection(conn, 1);
+		// exit(1);
 	}
 
 	prev_end = pmatch[0].rm_eo;
@@ -229,21 +235,23 @@ void handle_connection(struct connection conn, struct addrinfo **forbidden_addrs
 
 	prev_end = pmatch[0].rm_eo;
 
-	if (append_buf(&pkt_header, BUFFER_SIZE, buf + pmatch[0].rm_so, pmatch[0].rm_eo - pmatch[0].rm_so) < 0) {
+	if (append_buf(&conn->pkt_header, BUFFER_SIZE, buf + pmatch[0].rm_so, pmatch[0].rm_eo - pmatch[0].rm_so) < 0) {
 		fprintf(stderr, "myproxy ~ handle_connection(): failed to append request line to header buffer.\n");
-		exit(1);
+		close_connection(conn, 1);
+		// exit(1);
 	}
 
-	if (regcomp(&reg, HEADER_FIELD_REGEX, REG_EXTENDED) < 0) {
+	if (regcomp(&conn->reg, HEADER_FIELD_REGEX, REG_EXTENDED) < 0) {
 		fprintf(stderr, "myproxy ~ handle_connection(): regcomp() failed for header fields.\n");
-		exit(1);
+		close_connection(conn, 1);
+		// exit(1);
 	}
 
 	printf("header fields:\n");
 
 	struct addrinfo *hostaddr = NULL;
 
-	while ((reg_res = regexec(&reg, buf + prev_end, 3, pmatch, 0)) == 0) {
+	while ((reg_res = regexec(&conn->reg, buf + prev_end, 3, pmatch, 0)) == 0) {
 		char key[(pmatch[1].rm_eo - pmatch[1].rm_so) + 1];
 		key[sizeof(key) - 1] = 0;
 		memcpy(key, buf + prev_end + pmatch[1].rm_so, sizeof(key) - 1);
@@ -254,21 +262,22 @@ void handle_connection(struct connection conn, struct addrinfo **forbidden_addrs
 
 		printf("\t%s: %s\n", key, val);
 
-		if (append_buf(&pkt_header, BUFFER_SIZE, buf + prev_end + pmatch[0].rm_so, pmatch[0].rm_eo - pmatch[0].rm_so) < 0) {
+		if (append_buf(&conn->pkt_header, BUFFER_SIZE, buf + prev_end + pmatch[0].rm_so, pmatch[0].rm_eo - pmatch[0].rm_so) < 0) {
 			fprintf(stderr, "myproxy ~ handle_connection(): failed to append header field to header buffer.\n");
-			exit(1);
+			close_connection(conn, 1);
+			// exit(1);
 		}
 
 		if (!strcmp("Host", key)) {
 			if (resolve_host(val, &hostaddr) < 0) {
 				fprintf(stderr, "myproxy ~ handle_connection(): failed to resolve host.\n");
-				exit(1);
+				close_connection(conn, 1);
+				// exit(1);
 			}
 
 			if (host_forbidden(hostaddr, forbidden_addrs)) {
 				printf("FORBIDDEN HOST!\n");
-			} else {
-				printf("ALLOWED HOST\n");
+				close_connection(conn, 2);
 			}
 		}
 
@@ -277,10 +286,16 @@ void handle_connection(struct connection conn, struct addrinfo **forbidden_addrs
 
 	if (reg_res != REG_NOMATCH) {
 		fprintf(stderr, "myproxy ~ handle_connection(): regexec() failed for header fields.\n");
-		exit(1);
+		close_connection(conn, 1);
+		// exit(1);
 	}
 
-	printf("\nHEADER:\n==========\n%s\n", pkt_header);
+	printf("\nHEADER:\n==========\n%s\n", conn->pkt_header);
+
+	if (send_response(conn, 501) < 0) {
+		fprintf(stderr, "myproxy ~ handle_connection(): failed to send response with status code %d.\n", 501);
+		close_connection(conn, 1);
+	}
 
 	// read header into buffer and parse fields
 	// resolve hostname and get ip
@@ -291,13 +306,40 @@ void handle_connection(struct connection conn, struct addrinfo **forbidden_addrs
 		// wait for response and decrypt
 		// forward packet to client
 
-	free(pkt_header);
+	close_connection(conn, 0);
 
-	regfree(&reg);
+	// free(pkt_header);
 
-	close(conn.fd);
+	// regfree(&reg);
 
-	exit(0); // terminate process
+	// close(conn.fd);
+
+	// exit(0); // terminate process
+}
+
+int send_response(struct connection *conn, int status_code) {
+	char resp_buf[BUFFER_SIZE] = { 0 };
+
+	char *stat_phrase = NULL;
+
+	switch (status_code) {
+		case 501:
+			stat_phrase = "Not Implemented";
+		break;
+		default:
+			fprintf(stderr, "myproxy ~ send_reponse(): status code %d not recognized.\n", status_code);
+			return -1;
+		break;
+	};
+
+	sprintf(resp_buf, "HTTP/1.1 %d %s" EMPTY_LINE "Content-Length: %lu" DOUBLE_EMPTY_LINE "%s", status_code, stat_phrase, strlen(stat_phrase), stat_phrase);
+
+	if (write_n_bytes(conn->fd, resp_buf, strlen(resp_buf)) < 0) {
+		fprintf(stderr, "myproxy ~ send_response(): failed to write response to connection fd.\n");
+		return -1;
+	}
+
+	return 0;
 }
 
 int resolve_host(char *hostname, struct addrinfo **res) {
@@ -355,6 +397,21 @@ int host_forbidden(struct addrinfo *host, struct addrinfo **forbidden_addrs) {
 	}
 
 	return 0;
+}
+
+void close_connection(struct connection *conn, int exit_code) {
+	if (conn == NULL) {
+		fprintf(stderr, "myproxy ~ close_connection(): cannot close connection for NULL connection ptr.\n");
+		exit(1);
+	}
+	
+	free(conn->pkt_header);
+
+	regfree(&conn->reg);
+
+	close(conn->fd);
+
+	exit(exit_code);
 }
 
 void sig_catcher(int sig) {

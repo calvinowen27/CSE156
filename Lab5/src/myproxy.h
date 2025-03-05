@@ -26,6 +26,8 @@
 
 struct connection {
 	int fd;
+	char *pkt_header;
+	regex_t reg;
 };
 
 void usage(char *exec);
@@ -34,10 +36,14 @@ void sig_catcher(int sig);
 int handle_sigs(int *processes, const char *forbidden_fp, struct addrinfo **forbidden_addrs);
 u_int32_t sig_queued(int sig);
 
-void handle_connection(struct connection conn, struct addrinfo **forbidden_addrs);
+void handle_connection(struct connection *conn, struct addrinfo **forbidden_addrs);
+
+int send_response(struct connection *conn, int status_code);
 
 int resolve_host(char *hostname, struct addrinfo **res);
 int host_forbidden(struct addrinfo *host, struct addrinfo **forbidden_addrs);
+
+void close_connection(struct connection *conn, int exit_code);
 
 int load_forbidden_ips(const char *forbidden_fp, struct addrinfo **forbidden_addrs);
 
