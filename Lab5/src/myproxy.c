@@ -93,7 +93,8 @@ int main (int argc, char **argv) {
 
 	// init listen socket
 	struct sockaddr_in sockaddr;
-	socklen_t sockaddr_size = sizeof(sockaddr);
+	memset(&sockaddr, 0, sizeof(sockaddr));
+	socklen_t sockaddr_size = sizeof(struct sockaddr_in);
 
 	int listen_fd = init_socket(&sockaddr, NULL, port, AF_INET, SOCK_STREAM, IPPROTO_TCP, true);
 	if (listen_fd < 0) {
@@ -122,12 +123,25 @@ int main (int argc, char **argv) {
 			exit(1); // TODO: cleanup?
 		}
 
-		if ((connfd = accept(listen_fd, (struct sockaddr *)&sockaddr, &sockaddr_size)) < 0 && errno != EAGAIN) {
+		struct sockaddr_in clientaddr;
+		socklen_t clientaddr_size = sizeof(struct sockaddr_in);
+		
+		if ((connfd = accept(listen_fd, (struct sockaddr *)&clientaddr, &clientaddr_size)) < 0 && errno != EAGAIN) {
 			fprintf(stderr, "myproxy ~ main(): failed to accept connection on port %d: %s\n", port, strerror(errno));
 			exit(1); // TODO: maybe don't exit? cleanup
 		}
 
 		if (connfd < 0) continue;
+
+		struct connection conn;
+		conn.pkt_header = NULL;
+		conn.sockaddr = sockaddr;
+		conn.sockaddr_size = sockaddr_size;
+
+		conn.clientaddr = clientaddr;
+		conn.clientaddr_size = clientaddr_size;
+
+		conn.fd = connfd;
 
 		if (processes == MAX_PROCESSES) {
 			fprintf(stderr, "myproxy ~ main(): cannot accept connection, too many processes currently executing.\n");
@@ -136,9 +150,6 @@ int main (int argc, char **argv) {
 
 		// TODO: map child pid to connection ip
 		if (fork() == 0) {
-			struct connection conn;
-			conn.fd = connfd;
-			conn.pkt_header = NULL;
 			handle_connection(&conn, forbidden_addrs); // TODO: check error return? probably not, error handling internally
 		} else {
 			processes ++;
@@ -192,6 +203,7 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 	regmatch_t pmatch[4];
 
 	conn->pkt_header = calloc(BUFFER_SIZE, sizeof(char));
+	conn->pkt_header_size = BUFFER_SIZE;
 	if (conn->pkt_header == NULL) {
 		fprintf(stderr, "myproxy ~ handle_connection(): failed to allocate pkt_header buffer.\n");
 		close_connection(conn, 1);
@@ -235,7 +247,7 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 
 	prev_end = pmatch[0].rm_eo;
 
-	if (append_buf(&conn->pkt_header, BUFFER_SIZE, buf + pmatch[0].rm_so, pmatch[0].rm_eo - pmatch[0].rm_so) < 0) {
+	if ((conn->pkt_header_size = append_buf(&conn->pkt_header, conn->pkt_header_size, buf + pmatch[0].rm_so, pmatch[0].rm_eo - pmatch[0].rm_so)) < 0) {
 		fprintf(stderr, "myproxy ~ handle_connection(): failed to append request line to header buffer.\n");
 		close_connection(conn, 1);
 		// exit(1);
@@ -262,7 +274,7 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 
 		printf("\t%s: %s\n", key, val);
 
-		if (append_buf(&conn->pkt_header, BUFFER_SIZE, buf + prev_end + pmatch[0].rm_so, pmatch[0].rm_eo - pmatch[0].rm_so) < 0) {
+		if ((conn->pkt_header_size = append_buf(&conn->pkt_header, conn->pkt_header_size, buf + prev_end + pmatch[0].rm_so, pmatch[0].rm_eo - pmatch[0].rm_so)) < 0) {
 			fprintf(stderr, "myproxy ~ handle_connection(): failed to append header field to header buffer.\n");
 			close_connection(conn, 1);
 			// exit(1);
@@ -271,6 +283,12 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 		if (!strcmp("Host", key)) {
 			if (resolve_host(val, &hostaddr) < 0) {
 				fprintf(stderr, "myproxy ~ handle_connection(): failed to resolve host.\n");
+
+				if (send_response(conn, 502) < 0) {
+					fprintf(stderr, "myproxy ~ handle_connection(): failed to send response with status code 403.\n");
+					close_connection(conn, 1);
+				}
+
 				close_connection(conn, 1);
 				// exit(1);
 			}
@@ -293,7 +311,40 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 		// exit(1);
 	}
 
-	printf("\nHEADER:\n==========\n%s\n", conn->pkt_header);
+	char xff_hf[56] = { 0 };
+
+	u_int8_t *client_ip_bytes = split_bytes((u_int32_t)conn->clientaddr.sin_addr.s_addr);
+	if (client_ip_bytes == NULL) {
+		fprintf(stderr, "myproxy ~ handle_connection(): failed to split client ip address bytes.\n");
+		close_connection(conn, 1);
+	}
+
+	u_int8_t *proxy_ip_bytes = split_bytes((u_int32_t)conn->sockaddr.sin_addr.s_addr);
+	if (proxy_ip_bytes == NULL) {
+		fprintf(stderr, "myproxy ~ handle_connection(): failed to split proxy ip address bytes.\n");
+		close_connection(conn, 1);
+	}
+
+	char client_ip[INET_ADDRSTRLEN] = { 0 };
+	if (inet_ntop(AF_INET, &conn->clientaddr, client_ip, sizeof(client_ip)) == NULL) {
+		fprintf(stderr, "myproxy ~ handle_connection(): failed to get client ip address: %s\n", strerror(errno));
+		close_connection(conn, 1);
+	}
+
+	char proxy_ip[INET_ADDRSTRLEN] = { 0 };
+	if (inet_ntop(AF_INET, &conn->sockaddr, proxy_ip, sizeof(proxy_ip)) == NULL) {
+		fprintf(stderr, "myproxy ~ handle_connection(): failed to get proxy ip address: %s\n", strerror(errno));
+		close_connection(conn, 1);
+	}
+
+	sprintf(xff_hf, "X-Forwarded-For: %s %s" DOUBLE_EMPTY_LINE, client_ip, proxy_ip);
+
+	if ((conn->pkt_header_size = append_buf(&conn->pkt_header, conn->pkt_header_size, xff_hf, strlen(xff_hf))) < 0) {
+		fprintf(stderr, "myproxy ~ handle_connection(): failed to add X-Forward-For header field to pkt header.\n");
+		close_connection(conn, 1);
+	}
+
+	printf("\nHEADER:\n==============\n%s\n==============\n", conn->pkt_header);
 
 	if (send_response(conn, 501) < 0) {
 		fprintf(stderr, "myproxy ~ handle_connection(): failed to send response with status code 501.\n");
@@ -331,6 +382,9 @@ int send_response(struct connection *conn, int status_code) {
 		break;
 		case 501:
 			stat_phrase = "Not Implemented";
+		break;
+		case 502:
+			stat_phrase = "Bad Gateway";
 		break;
 		default:
 			fprintf(stderr, "myproxy ~ send_reponse(): status code %d not recognized.\n", status_code);

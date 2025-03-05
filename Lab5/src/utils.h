@@ -26,7 +26,7 @@ int write_n_bytes(int sockfd, char *buf, int n);
 // return 0 on success, -1 for error
 int pass_n_bytes(int infd, int outfd, int n);
 
-int append_buf(char **buf, size_t buf_size, char *addtl, size_t addtl_size);
+ssize_t append_buf(char **buf, size_t buf_size, char *addtl, size_t addtl_size);
 
 int shift_file_contents(int fd, off_t start_idx, int amount);
 

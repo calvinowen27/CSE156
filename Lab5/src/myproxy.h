@@ -27,7 +27,14 @@
 struct connection {
 	int fd;
 	char *pkt_header;
+	size_t pkt_header_size;
 	regex_t reg;
+
+	struct sockaddr_in clientaddr;
+	socklen_t clientaddr_size;
+
+	struct sockaddr_in sockaddr;
+	socklen_t sockaddr_size;
 };
 
 void usage(char *exec);

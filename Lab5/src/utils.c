@@ -125,9 +125,11 @@ int pass_n_bytes(int infd, int outfd, int n) {
 	return 0;
 }
 
-int append_buf(char **buf, size_t buf_size, char *addtl, size_t addtl_size) {
+ssize_t append_buf(char **buf, size_t buf_size, char *addtl, size_t addtl_size) {
+	ssize_t new_size = buf_size;
 	if (strlen(*buf) + addtl_size > buf_size) {
 		(*buf) = realloc(*buf, strlen(*buf) + addtl_size);
+		new_size = strlen(*buf) + addtl_size;
 		if (*buf == NULL) {
 			fprintf(stderr, "append_buf(): failed to reallocate buffer\n");
 			return -1;
@@ -138,7 +140,7 @@ int append_buf(char **buf, size_t buf_size, char *addtl, size_t addtl_size) {
 
 	memcpy((*buf) + strlen(*buf), addtl, addtl_size);
 
-	return 0;
+	return new_size;
 }
 
 int shift_file_contents(int fd, off_t start_idx, int amount) {
