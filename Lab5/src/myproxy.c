@@ -16,6 +16,10 @@
 #include <netdb.h>
 #include <sys/types.h>
 
+// #include <openssl/bio.h>
+// #include <openssl/ssl.h>
+// #include <openssl/err.h>
+
 #include "myproxy.h"
 #include "utils.h"
 
@@ -39,6 +43,8 @@ void usage(char *exec) {
 int main (int argc, char **argv) {
 	signal(SIGCHLD, &sig_catcher);
 	signal(SIGINT, &sig_catcher);
+
+	// SSL_library_init();
 
 	int port = 9090; // TODO: check
 	char *forbidden_fp = NULL, *access_log_fp = "access.log";
@@ -263,7 +269,10 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 
 	struct addrinfo *hostaddr = NULL;
 
+	int content_len = -1;
+
 	while ((reg_res = regexec(&conn->reg, buf + prev_end, 3, pmatch, 0)) == 0) {
+		// parse header field for processing
 		char key[(pmatch[1].rm_eo - pmatch[1].rm_so) + 1];
 		key[sizeof(key) - 1] = 0;
 		memcpy(key, buf + prev_end + pmatch[1].rm_so, sizeof(key) - 1);
@@ -274,12 +283,14 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 
 		printf("\t%s: %s\n", key, val);
 
+		// add header field back to pkt header for forwarding
 		if ((conn->pkt_header_size = append_buf(&conn->pkt_header, conn->pkt_header_size, buf + prev_end + pmatch[0].rm_so, pmatch[0].rm_eo - pmatch[0].rm_so)) < 0) {
 			fprintf(stderr, "myproxy ~ handle_connection(): failed to append header field to header buffer.\n");
 			close_connection(conn, 1);
 			// exit(1);
 		}
 
+		// resolve host ip and check if forbidden
 		if (!strcmp("Host", key)) {
 			if (resolve_host(val, &hostaddr) < 0) {
 				fprintf(stderr, "myproxy ~ handle_connection(): failed to resolve host.\n");
@@ -300,6 +311,8 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 				}
 				close_connection(conn, 2);
 			}
+		} else if (!strcmp("Content-Length", key)) { // save content length
+			content_len = atoi(val);
 		}
 
 		prev_end += pmatch[0].rm_eo;
@@ -313,30 +326,21 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 
 	char xff_hf[56] = { 0 };
 
-	u_int8_t *client_ip_bytes = split_bytes((u_int32_t)conn->clientaddr.sin_addr.s_addr);
-	if (client_ip_bytes == NULL) {
-		fprintf(stderr, "myproxy ~ handle_connection(): failed to split client ip address bytes.\n");
-		close_connection(conn, 1);
-	}
-
-	u_int8_t *proxy_ip_bytes = split_bytes((u_int32_t)conn->sockaddr.sin_addr.s_addr);
-	if (proxy_ip_bytes == NULL) {
-		fprintf(stderr, "myproxy ~ handle_connection(): failed to split proxy ip address bytes.\n");
-		close_connection(conn, 1);
-	}
-
-	char client_ip[INET_ADDRSTRLEN] = { 0 };
-	if (inet_ntop(AF_INET, &conn->clientaddr, client_ip, sizeof(client_ip)) == NULL) {
+	char ip_buf[INET_ADDRSTRLEN] = { 0 };
+	if (inet_ntop(AF_INET, &conn->clientaddr, ip_buf, sizeof(ip_buf)) == NULL) {
 		fprintf(stderr, "myproxy ~ handle_connection(): failed to get client ip address: %s\n", strerror(errno));
 		close_connection(conn, 1);
 	}
+	char *client_ip = strtok(ip_buf, ":"); // remove port if included
 
-	char proxy_ip[INET_ADDRSTRLEN] = { 0 };
-	if (inet_ntop(AF_INET, &conn->sockaddr, proxy_ip, sizeof(proxy_ip)) == NULL) {
+	// char proxy_ip[INET_ADDRSTRLEN] = { 0 };
+	if (inet_ntop(AF_INET, &conn->sockaddr, ip_buf, sizeof(ip_buf)) == NULL) {
 		fprintf(stderr, "myproxy ~ handle_connection(): failed to get proxy ip address: %s\n", strerror(errno));
 		close_connection(conn, 1);
 	}
+	char *proxy_ip = strtok(ip_buf, ":"); // remove port if included
 
+	// TODO: check for more proxies desired?
 	sprintf(xff_hf, "X-Forwarded-For: %s %s" DOUBLE_EMPTY_LINE, client_ip, proxy_ip);
 
 	if ((conn->pkt_header_size = append_buf(&conn->pkt_header, conn->pkt_header_size, xff_hf, strlen(xff_hf))) < 0) {
@@ -346,9 +350,18 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 
 	printf("\nHEADER:\n==============\n%s\n==============\n", conn->pkt_header);
 
-	if (send_response(conn, 501) < 0) {
-		fprintf(stderr, "myproxy ~ handle_connection(): failed to send response with status code 501.\n");
-		close_connection(conn, 1);
+	// find start of body from first packet
+	char *pkt_body_start = buf + prev_end;
+
+	(void)pkt_body_start;
+	(void)content_len;
+
+	// check for unimplemented methods
+	if (strcmp("GET", method) && strcmp("HEAD", method)) {	
+		if (send_response(conn, 501) < 0) {
+			fprintf(stderr, "myproxy ~ handle_connection(): failed to send response with status code 501.\n");
+			close_connection(conn, 1);
+		}
 	}
 
 	// read header into buffer and parse fields
