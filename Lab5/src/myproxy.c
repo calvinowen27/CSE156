@@ -422,7 +422,7 @@ int resolve_host(char *hostname, struct addrinfo **res) {
 	hints.ai_family = PF_INET;
 	hints.ai_socktype = SOCK_STREAM;
 	hints.ai_protocol = IPPROTO_TCP;
-	hints.ai_flags = AI_DEFAULT;
+	hints.ai_flags = AI_V4MAPPED_CFG | AI_ADDRCONFIG;
 
 	printf("resolving hostname %s\n", hostname);
 	if (getaddrinfo(hostname, NULL, &hints, res) < 0) {
