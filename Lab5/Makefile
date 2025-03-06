@@ -7,7 +7,8 @@ all: $(PROXY_BIN)
 
 $(PROXY_BIN): $(PROXY_OBJS)
 	mkdir -p bin
-	gcc -pthread -o bin/$@ $^
+	gcc -o bin/$@ $^ -L/opt/homebrew/lib -lssl
+# gcc -o bin/$@ $^ -L/usr/lib/aarch64-linux-gnu -lssl
 
 src/%.o : %.c
 	gcc $(CFLAGS) -c $<
