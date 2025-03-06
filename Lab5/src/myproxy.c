@@ -16,9 +16,9 @@
 #include <netdb.h>
 #include <sys/types.h>
 
-// #include <openssl/bio.h>
-// #include <openssl/ssl.h>
-// #include <openssl/err.h>
+#include <openssl/bio.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 
 #include "myproxy.h"
 #include "utils.h"
@@ -44,7 +44,7 @@ int main (int argc, char **argv) {
 	signal(SIGCHLD, &sig_catcher);
 	signal(SIGINT, &sig_catcher);
 
-	// SSL_library_init();
+	SSL_library_init();
 
 	int port = 9090; // TODO: check
 	char *forbidden_fp = NULL, *access_log_fp = "access.log";
