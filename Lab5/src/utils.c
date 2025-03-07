@@ -194,7 +194,7 @@ int init_sockaddr(int sockfd, struct sockaddr_in *sockaddr, const char *ip_addr,
 
 	if (ip_addr == NULL) {
 		sockaddr->sin_addr.s_addr = INADDR_ANY;
-	} else if (inet_pton(domain, ip_addr, &(sockaddr->sin_addr.s_addr)) < 0) {
+	} else if (inet_pton(domain, ip_addr, &(sockaddr->sin_addr.s_addr)) <= 0) {
 		fprintf(stderr, "utils ~ init_sockaddr(): invalid ip address provided\n");
 		return -1;
 	}
@@ -204,6 +204,8 @@ int init_sockaddr(int sockfd, struct sockaddr_in *sockaddr, const char *ip_addr,
 		fprintf(stderr, "utils ~ init_sockaddr(): failed to bind socket: %s\n", strerror(errno));
 		return -1;
 	}
+
+	memset(&sockaddr->sin_zero, 0, sizeof(sockaddr->sin_zero));
 
 	return 0;
 }

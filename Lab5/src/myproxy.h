@@ -25,7 +25,9 @@
 #define HEADER_FIELD_REGEX	HKEY_REGEX ": " HVAL_REGEX EMPTY_LINE
 
 struct connection {
-	int fd;
+	int clientfd;
+	int servfd;
+
 	char *pkt_header;
 	ssize_t pkt_header_size;
 	regex_t reg;
@@ -46,6 +48,9 @@ u_int32_t sig_queued(int sig);
 void handle_connection(struct connection *conn, struct addrinfo **forbidden_addrs);
 
 int send_response(struct connection *conn, int status_code);
+
+int test(char *dest_url);
+int create_socket(char url_str[], BIO *out);
 
 int resolve_host(char *hostname, struct addrinfo **res);
 int host_forbidden(struct addrinfo *host, struct addrinfo **forbidden_addrs);

@@ -45,6 +45,8 @@ int main (int argc, char **argv) {
 	signal(SIGINT, &sig_catcher);
 
 	SSL_library_init();
+	SSL_load_error_strings();
+	OpenSSL_add_all_algorithms();
 
 	int port = 9090; // TODO: check
 	char *forbidden_fp = NULL, *access_log_fp = "access.log";
@@ -147,7 +149,7 @@ int main (int argc, char **argv) {
 		conn.clientaddr = clientaddr;
 		conn.clientaddr_size = clientaddr_size;
 
-		conn.fd = connfd;
+		conn.clientfd = connfd;
 
 		if (processes == MAX_PROCESSES) {
 			fprintf(stderr, "myproxy ~ main(): cannot accept connection, too many processes currently executing.\n");
@@ -172,8 +174,8 @@ int main (int argc, char **argv) {
 }
 
 void handle_connection(struct connection *conn, struct addrinfo **forbidden_addrs) {
-	// make sure connection fd blocks for read
-	if (fcntl(conn->fd, F_SETFL, fcntl(conn->fd, F_GETFL, 0) & ~O_NONBLOCK) < 0) {
+	// make sure connection clientfd blocks for read
+	if (fcntl(conn->clientfd, F_SETFL, fcntl(conn->clientfd, F_GETFL, 0) & ~O_NONBLOCK) < 0) {
 		fprintf(stderr, "myproxy ~ main(): failed to set listen socket non-blocking\n");
 		close_connection(conn, 1);
 		// exit(1);
@@ -184,7 +186,7 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 	// buf[BUFFER_SIZE] = 0; // just for printing, null termination
 
 	// just read and print
-	// while ((res = read(conn.fd, buf, sizeof(buf))) > 0) {
+	// while ((res = read(conn.clientfd, buf, sizeof(buf))) > 0) {
 	// 	printf("%s", buf);
 
 	// 	memset(buf, 0, sizeof(buf));
@@ -198,8 +200,8 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 		// exit(1);
 	}
 
-	if (read_n_bytes(conn->fd, buf, sizeof(buf)) < 0) {
-		fprintf(stderr, "myproxy ~ handle_connection(): failed to read_n_bytes() from connection fd.\n");
+	if (read_n_bytes(conn->clientfd, buf, sizeof(buf)) < 0) {
+		fprintf(stderr, "myproxy ~ handle_connection(): failed to read_n_bytes() from connection clientfd.\n");
 		close_connection(conn, 1);
 		// exit(1);
 	}
@@ -268,6 +270,7 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 	printf("header fields:\n");
 
 	struct addrinfo *hostaddr = NULL;
+	// char *hostname;
 
 	int content_len = -1;
 
@@ -311,6 +314,14 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 				}
 				close_connection(conn, 2);
 			}
+
+			// hostname = calloc(strlen(val) + 1, sizeof(char));
+			// if (hostname == NULL) {
+			// 	fprintf(stderr, "myproxy ~ handle_connection(): failed to allocate hostname.\n");
+			// 	close_connection(conn, 1);
+			// }
+			// memcpy(hostname, val, strlen(val));
+			// hostname[strlen(val)] = 0;
 		} else if (!strcmp("Content-Length", key)) { // save content length
 			content_len = atoi(val);
 		}
@@ -326,19 +337,19 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 
 	char xff_hf[56] = { 0 };
 
-	char ip_buf[INET_ADDRSTRLEN] = { 0 };
-	if (inet_ntop(AF_INET, &conn->clientaddr, ip_buf, sizeof(ip_buf)) == NULL) {
+	char client_ip_buf[INET_ADDRSTRLEN] = { 0 };
+	if (inet_ntop(AF_INET, &conn->clientaddr, client_ip_buf, sizeof(client_ip_buf)) == NULL) {
 		fprintf(stderr, "myproxy ~ handle_connection(): failed to get client ip address: %s\n", strerror(errno));
 		close_connection(conn, 1);
 	}
-	char *client_ip = strtok(ip_buf, ":"); // remove port if included
+	char *client_ip = strtok(client_ip_buf, ":"); // remove port if included
 
-	// char proxy_ip[INET_ADDRSTRLEN] = { 0 };
-	if (inet_ntop(AF_INET, &conn->sockaddr, ip_buf, sizeof(ip_buf)) == NULL) {
+	char proxy_ip_buf[INET_ADDRSTRLEN] = { 0 };
+	if (inet_ntop(AF_INET, &conn->sockaddr, proxy_ip_buf, sizeof(proxy_ip_buf)) == NULL) {
 		fprintf(stderr, "myproxy ~ handle_connection(): failed to get proxy ip address: %s\n", strerror(errno));
 		close_connection(conn, 1);
 	}
-	char *proxy_ip = strtok(ip_buf, ":"); // remove port if included
+	char *proxy_ip = strtok(proxy_ip_buf, ":"); // remove port if included
 
 	// TODO: check for more proxies desired?
 	sprintf(xff_hf, "X-Forwarded-For: %s %s" DOUBLE_EMPTY_LINE, client_ip, proxy_ip);
@@ -353,7 +364,7 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 	// find start of body from first packet
 	char *pkt_body_start = buf + prev_end;
 
-	(void)pkt_body_start;
+	// (void)pkt_body_start;
 	(void)content_len;
 
 	// check for unimplemented methods
@@ -364,6 +375,169 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 		}
 	}
 
+	const SSL_METHOD *ssl_method = SSLv23_client_method();
+	SSL_CTX *ctx = SSL_CTX_new(ssl_method);
+	SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2);
+	// BIO *bio = BIO_new_ssl_connect(ctx);
+
+	SSL *ssl = SSL_new(ctx);
+
+	/* verify truststore, check cert */ 
+    // char* invalid_cert = "Invalid SSL Certificate";
+    if (!SSL_CTX_load_verify_locations(ctx, "/etc/ssl/certs/ca-bundle.trust.crt", "/etc/ssl/certs/")) {
+        // NONFATAL_ERROR(invalid_cert, 1);
+		fprintf(stderr, "myproxy ~ handle_connection(): invalid SSL certificate.\n");
+		close_connection(conn, 1);
+	}
+
+	// printf("load cert verify locations complete.\n");
+
+	// char name[strlen(hostname) + 7];
+	// name[sizeof(name) - 1] = 0;
+	// sprintf(name, "%s:https", hostname);
+	// free(hostname);
+
+	// BIO_get_ssl(bio, &ssl);
+	// SSL_set_mode(ssl, SSL_MODE_AUTO_RETRY);
+	// BIO_set_conn_hostname(bio, name);
+
+	struct sockaddr_in servaddr;
+
+	char serv_ip_buf[INET_ADDRSTRLEN] = { 0 };
+	if (inet_ntop(hostaddr->ai_family, &((struct sockaddr_in *)(hostaddr->ai_addr))->sin_addr, serv_ip_buf, sizeof(serv_ip_buf)) == NULL) {
+		fprintf(stderr, "myproxy ~ handle_connection(): failed to get server ip address: %s\n", strerror(errno));
+		close_connection(conn, 1);
+	}
+	char *serv_ip = strtok(serv_ip_buf, ":"); // remove port if included
+	
+	// printf("server ip:%s\n", serv_ip);
+	printf("SERVER IP: %s\n", serv_ip);
+
+	// test(url);
+	// close_connection(conn, 0);
+
+	conn->servfd = init_socket(&servaddr, serv_ip, 443, AF_INET, SOCK_STREAM, 0, false);
+	if (conn->servfd < 0) {
+		fprintf(stderr, "myproxy ~ handle_connection(): failed to initialize server socket.\n");
+		close_connection(conn, 1);
+	}
+
+	if (connect(conn->servfd, (struct sockaddr *)&servaddr, sizeof(struct sockaddr)) < 0) {
+		fprintf(stderr, "myproxy ~ handle_connection(): failed to connect to server.\n");
+		close_connection(conn, 1);
+	}
+
+	if (!SSL_set_fd(ssl, conn->servfd)) {
+		fprintf(stderr, "myproxy ~ handle_connection(): failed to set ssl clientfd\n");
+		close_connection(conn, 1);
+	}
+
+	int ssl_res;
+
+	/* try to connect */ 
+    // if (0 >= BIO_do_connect(bio)) { 
+    //     ssl_cleanup(ctx, bio); 
+    //     char* bio = "Bio Connect Error\n";
+    //     NONFATAL_ERROR(bio, 1);
+    // }
+
+	printf("calling SSL_connect()\n");
+
+
+	if ((ssl_res = SSL_connect(ssl)) <= 0) {
+		if (send_response(conn, 504) < 0) {
+			fprintf(stderr, "myproxy ~ handle_connection(): failed to send 504 status.\n");
+		}
+		fprintf(stderr, "myproxy ~ handle_connection(): failed to initiate SSL connect %d: %s.\n", SSL_get_error(ssl, ssl_res), strerror(errno));
+		close_connection(conn, 1);
+	}
+
+	printf("SSL connection complete.\n");
+
+    long verify_flag = SSL_get_verify_result(ssl); 
+    if (verify_flag != X509_V_OK) {
+		fprintf(stderr, "##### Certificate verification error (%i) but continuing...\n", (int) verify_flag);
+		close_connection(conn, 1);
+	}
+	
+	printf("verification complete.\n");
+
+	// X509 *cert = SSL_get_peer_certificate(ssl);
+	// if (cert == NULL) {
+	// 	fprintf(stderr, "myproxy ~ handle_connection(): server did not provide certificate.\n");
+	// 	close_connection(conn, 1);
+	// }
+
+	// SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
+
+	// X509_STORE *store = X509_STORE_new();
+    // X509_STORE_CTX *xctx = X509_STORE_CTX_new();
+
+	// if (store == NULL || xctx == NULL) {
+	// 	fprintf(stderr, "myproxy ~ handle_connection(): failed to init store or x509 ctx.\n");
+	// 	close_connection(conn, 1);
+	// }
+
+    // X509_STORE_add_cert(store, cert);
+    // X509_STORE_CTX_init(xctx, store, cert, NULL);
+
+    // if (!X509_verify_cert(xctx)) {
+	// 	printf("CERT NOT VERIFIED.\n");
+	// 	close_connection(conn, 1);
+	// }
+
+	char pkt[conn->pkt_header_size + strlen(pkt_body_start) + 1];
+	pkt[sizeof(pkt) - 1] = 0;
+	memcpy(pkt, conn->pkt_header, conn->pkt_header_size);
+	memcpy(pkt + conn->pkt_header_size, pkt_body_start, strlen(pkt_body_start));
+
+	printf("\n\n=============\nSENDING:\n%s\n===============\n", pkt);
+
+	if ((ssl_res = SSL_write(ssl, pkt, sizeof(pkt) - 1)) <= 0) {
+		fprintf(stderr, "myproxy ~ handle_connection(): failed to write to SSL connection. %d: %s\n", SSL_get_error(ssl, ssl_res), strerror(errno));
+		close_connection(conn, 1);
+	}
+
+	int res;
+
+	while (1) {
+		do {
+			memset(buf, 0, sizeof(buf));
+			if ((ssl_res = SSL_read(ssl, buf, sizeof(buf) - 1)) <= 0) {
+				fprintf(stderr, "myproxy ~ handle_connection(): failed to read from SSL connection. %d: %s\n", SSL_get_error(ssl, ssl_res), strerror(errno));
+				close_connection(conn, 1);
+			}
+
+			printf("\n\n====================\nSERVER:\n%s\n====================\n", buf);
+
+			if ((res = write_n_bytes(conn->clientfd, buf, ssl_res)) < 0) {
+				fprintf(stderr,  "myproxy ~ handle_connection(): failed to write to client.\n");
+				close_connection(conn, 1);
+			}
+		} while (ssl_res > 0 || res > 0);
+
+		do {
+			memset(buf, 0, sizeof(buf));
+			if ((res = read_n_bytes(conn->clientfd, buf, sizeof(buf) - 1)) < 0) {
+				fprintf(stderr, "myproxy ~ handle_connection(): failed to read from client.\n");
+				close_connection(conn, 1);
+			}
+
+			printf("\n\n====================\nCLIENT:\n%s\n====================\n", buf);
+
+			if ((ssl_res = SSL_write(ssl, buf, res)) < 0) {
+				fprintf(stderr, "myproxy ~ handle_connection(): failed to write to SSL connection. %d: %s\n", SSL_get_error(ssl, ssl_res), strerror(errno));
+				close_connection(conn, 1);
+			}			
+		} while (ssl_res > 0 || res > 0);
+	}
+
+	// if (BIO_do_connect(bio) <= 0) {
+	// 
+	// }
+
+
+
 	// read header into buffer and parse fields
 	// resolve hostname and get ip
 	// check if forbidden
@@ -373,13 +547,19 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 		// wait for response and decrypt
 		// forward packet to client
 
+	
+	SSL_shutdown(ssl);
+	SSL_free(ssl);
+	SSL_CTX_free(ctx);
+	// BIO_free(bio);
+
 	close_connection(conn, 0);
 
 	// free(pkt_header);
 
 	// regfree(&reg);
 
-	// close(conn.fd);
+	// close(conn.clientfd);
 
 	// exit(0); // terminate process
 }
@@ -399,6 +579,9 @@ int send_response(struct connection *conn, int status_code) {
 		case 502:
 			stat_phrase = "Bad Gateway";
 		break;
+		case 504:
+			stat_phrase = "Gateway Timeout";
+		break;
 		default:
 			fprintf(stderr, "myproxy ~ send_reponse(): status code %d not recognized.\n", status_code);
 			return -1;
@@ -407,8 +590,8 @@ int send_response(struct connection *conn, int status_code) {
 
 	sprintf(resp_buf, "HTTP/1.1 %d %s" EMPTY_LINE "Content-Length: %lu" DOUBLE_EMPTY_LINE "%s", status_code, stat_phrase, strlen(stat_phrase), stat_phrase);
 
-	if (write_n_bytes(conn->fd, resp_buf, strlen(resp_buf)) < 0) {
-		fprintf(stderr, "myproxy ~ send_response(): failed to write response to connection fd.\n");
+	if (write_n_bytes(conn->clientfd, resp_buf, strlen(resp_buf)) < 0) {
+		fprintf(stderr, "myproxy ~ send_response(): failed to write response to connection clientfd.\n");
 		return -1;
 	}
 
@@ -422,7 +605,7 @@ int resolve_host(char *hostname, struct addrinfo **res) {
 	hints.ai_family = PF_INET;
 	hints.ai_socktype = SOCK_STREAM;
 	hints.ai_protocol = IPPROTO_TCP;
-	hints.ai_flags = 0x00000200 | 0x00000400;
+	// hints.ai_flags = 0x00000200 | 0x00000400;
 
 	printf("resolving hostname %s\n", hostname);
 	if (getaddrinfo(hostname, NULL, &hints, res) < 0) {
@@ -482,7 +665,8 @@ void close_connection(struct connection *conn, int exit_code) {
 
 	regfree(&conn->reg);
 
-	close(conn->fd);
+	close(conn->clientfd);
+	close(conn->servfd);
 
 	exit(exit_code);
 }
