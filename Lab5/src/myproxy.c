@@ -19,6 +19,8 @@
 #include <openssl/bio.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#include <openssl/x509v3.h>
+#include <openssl/x509.h>
 
 #include "myproxy.h"
 #include "utils.h"
@@ -377,29 +379,20 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 
 	const SSL_METHOD *ssl_method = SSLv23_client_method();
 	SSL_CTX *ctx = SSL_CTX_new(ssl_method);
-	SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2);
+	SSL_CTX_set_options(ctx, SSL_OP_ALL | SSL_OP_NO_SSLv2);
 	// BIO *bio = BIO_new_ssl_connect(ctx);
 
-	SSL *ssl = SSL_new(ctx);
-
 	/* verify truststore, check cert */ 
-    // char* invalid_cert = "Invalid SSL Certificate";
-    if (!SSL_CTX_load_verify_locations(ctx, "/etc/ssl/certs/ca-bundle.trust.crt", "/etc/ssl/certs/")) {
-        // NONFATAL_ERROR(invalid_cert, 1);
-		fprintf(stderr, "myproxy ~ handle_connection(): invalid SSL certificate.\n");
-		close_connection(conn, 1);
-	}
+    // if (!SSL_CTX_load_verify_locations(ctx, "/etc/ssl/certs/ca-bundle.trust.crt", "/etc/ssl/certs/")) {
+	// 	fprintf(stderr, "myproxy ~ handle_connection(): invalid SSL certificate.\n");
+	// 	close_connection(conn, 1);
+	// }
 
-	// printf("load cert verify locations complete.\n");
+	// SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
 
-	// char name[strlen(hostname) + 7];
-	// name[sizeof(name) - 1] = 0;
-	// sprintf(name, "%s:https", hostname);
-	// free(hostname);
+	// SSL_CTX_set_mode(ctx, CLIENT)
 
-	// BIO_get_ssl(bio, &ssl);
-	// SSL_set_mode(ssl, SSL_MODE_AUTO_RETRY);
-	// BIO_set_conn_hostname(bio, name);
+	SSL *ssl = SSL_new(ctx);
 
 	struct sockaddr_in servaddr;
 
@@ -434,13 +427,6 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 
 	int ssl_res;
 
-	/* try to connect */ 
-    // if (0 >= BIO_do_connect(bio)) { 
-    //     ssl_cleanup(ctx, bio); 
-    //     char* bio = "Bio Connect Error\n";
-    //     NONFATAL_ERROR(bio, 1);
-    // }
-
 	printf("calling SSL_connect()\n");
 
 
@@ -448,27 +434,62 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 		if (send_response(conn, 504) < 0) {
 			fprintf(stderr, "myproxy ~ handle_connection(): failed to send 504 status.\n");
 		}
-		fprintf(stderr, "myproxy ~ handle_connection(): failed to initiate SSL connect %d: %s.\n", SSL_get_error(ssl, ssl_res), strerror(errno));
+		fprintf(stderr, "myproxy ~ handle_connection(): failed to initiate SSL connect %d (%d).\n", SSL_get_error(ssl, ssl_res), ssl_res);
 		close_connection(conn, 1);
 	}
 
 	printf("SSL connection complete.\n");
 
-    long verify_flag = SSL_get_verify_result(ssl); 
-    if (verify_flag != X509_V_OK) {
-		fprintf(stderr, "##### Certificate verification error (%i) but continuing...\n", (int) verify_flag);
-		close_connection(conn, 1);
-	}
-	
-	printf("verification complete.\n");
-
-	// X509 *cert = SSL_get_peer_certificate(ssl);
-	// if (cert == NULL) {
-	// 	fprintf(stderr, "myproxy ~ handle_connection(): server did not provide certificate.\n");
+    // long verify_flag = SSL_get_verify_result(ssl); 
+    // if (verify_flag != X509_V_OK) {
+	// 	fprintf(stderr, "##### Certificate verification error (%i) but continuing...\n", (int) verify_flag);
 	// 	close_connection(conn, 1);
 	// }
+	
+	// printf("verification complete.\n");
 
-	// SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
+	X509 *cert = SSL_get_peer_certificate(ssl);
+	printf("got cert.\n");
+	if (cert == NULL) {
+		fprintf(stderr, "myproxy ~ handle_connection(): server did not provide certificate.\n");
+		close_connection(conn, 1);
+	}
+
+	STACK_OF(X509) *sk = SSL_get_peer_cert_chain(ssl);
+	printf("got chain.\n");
+	if (sk == NULL) {
+		sk = sk_X509_new_null();
+		sk_X509_push(sk, cert);
+	}
+
+	X509 *subj = cert;
+	X509 *check_cert;
+
+	int ca = -1;
+
+	do {
+		check_cert = sk_X509_pop(sk);
+
+		if (check_cert == NULL) break;
+
+		if (X509_check_issued(check_cert, subj) == X509_V_OK) {
+			if ((ca = X509_check_ca(check_cert)) >= 1) {
+				printf("Verified CA with unbroken chain: %d\n", ca);
+				break;
+			}
+			
+			subj = check_cert;
+		} else {
+			fprintf(stderr, "myproxy ~ handle_connection(): certificate chain broken.\n");
+			close_connection(conn, 1);
+		}
+
+		if (check_cert == subj) {
+			printf("Self issued certificate.\n");
+			break;
+		}
+	} while (check_cert != NULL);
+
 
 	// X509_STORE *store = X509_STORE_new();
     // X509_STORE_CTX *xctx = X509_STORE_CTX_new();
@@ -508,13 +529,13 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 				close_connection(conn, 1);
 			}
 
-			printf("\n\n====================\nSERVER:\n%s\n====================\n", buf);
+			// printf("\n\n====================\nSERVER:\n%s\n====================\n", buf);
 
 			if ((res = write_n_bytes(conn->clientfd, buf, ssl_res)) < 0) {
 				fprintf(stderr,  "myproxy ~ handle_connection(): failed to write to client.\n");
 				close_connection(conn, 1);
 			}
-		} while (ssl_res > 0 || res > 0);
+		} while (ssl_res > 0 && res > 0);
 
 		do {
 			memset(buf, 0, sizeof(buf));
@@ -523,13 +544,13 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 				close_connection(conn, 1);
 			}
 
-			printf("\n\n====================\nCLIENT:\n%s\n====================\n", buf);
+			// printf("\n\n====================\nCLIENT:\n%s\n====================\n", buf);
 
 			if ((ssl_res = SSL_write(ssl, buf, res)) < 0) {
 				fprintf(stderr, "myproxy ~ handle_connection(): failed to write to SSL connection. %d: %s\n", SSL_get_error(ssl, ssl_res), strerror(errno));
 				close_connection(conn, 1);
 			}			
-		} while (ssl_res > 0 || res > 0);
+		} while (ssl_res > 0 && res > 0);
 	}
 
 	// if (BIO_do_connect(bio) <= 0) {
