@@ -364,7 +364,7 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 	printf("\nHEADER:\n==============\n%s\n==============\n", conn->pkt_header);
 
 	// find start of body from first packet
-	char *pkt_body_start = buf + prev_end;
+	char *pkt_body_start = buf + prev_end + 2;
 
 	// (void)pkt_body_start;
 	(void)content_len;
@@ -477,7 +477,7 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 				printf("Verified CA with unbroken chain: %d\n", ca);
 				break;
 			}
-			
+
 			subj = check_cert;
 		} else {
 			fprintf(stderr, "myproxy ~ handle_connection(): certificate chain broken.\n");
@@ -507,12 +507,14 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 	// 	close_connection(conn, 1);
 	// }
 
-	char pkt[conn->pkt_header_size + strlen(pkt_body_start) + 1];
+	int pkt_header_len = prev_end + strlen(xff_hf);
+	char pkt[pkt_header_len + strlen(pkt_body_start) + 1];
 	pkt[sizeof(pkt) - 1] = 0;
-	memcpy(pkt, conn->pkt_header, conn->pkt_header_size);
-	memcpy(pkt + conn->pkt_header_size, pkt_body_start, strlen(pkt_body_start));
+	memcpy(pkt, conn->pkt_header, pkt_header_len);
+	memcpy(pkt + pkt_header_len, pkt_body_start, strlen(pkt_body_start));
+	printf("pkt header size: %zu strlen(pkt header): %zu\n", sizeof(pkt) - 1, strlen(pkt));
 
-	printf("\n\n=============\nSENDING:\n%s\n===============\n", pkt);
+	printf("\n\n====================\nCLIENT:\n%s\n====================\n", pkt);
 
 	if ((ssl_res = SSL_write(ssl, pkt, sizeof(pkt) - 1)) <= 0) {
 		fprintf(stderr, "myproxy ~ handle_connection(): failed to write to SSL connection. %d: %s\n", SSL_get_error(ssl, ssl_res), strerror(errno));
@@ -524,12 +526,14 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 	while (1) {
 		do {
 			memset(buf, 0, sizeof(buf));
-			if ((ssl_res = SSL_read(ssl, buf, sizeof(buf) - 1)) <= 0) {
+			if ((ssl_res = SSL_read(ssl, buf, sizeof(buf) - 1)) < 0) {
 				fprintf(stderr, "myproxy ~ handle_connection(): failed to read from SSL connection. %d: %s\n", SSL_get_error(ssl, ssl_res), strerror(errno));
 				close_connection(conn, 1);
 			}
 
-			// printf("\n\n====================\nSERVER:\n%s\n====================\n", buf);
+			if (ssl_res == 0) break;
+
+			printf("\n\n====================\nSERVER:\n%s\n====================\n", buf);
 
 			if ((res = write_n_bytes(conn->clientfd, buf, ssl_res)) < 0) {
 				fprintf(stderr,  "myproxy ~ handle_connection(): failed to write to client.\n");
@@ -544,7 +548,9 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 				close_connection(conn, 1);
 			}
 
-			// printf("\n\n====================\nCLIENT:\n%s\n====================\n", buf);
+			if (res == 0) break;
+
+			printf("\n\n====================\nCLIENT:\n%s\n====================\n", buf);
 
 			if ((ssl_res = SSL_write(ssl, buf, res)) < 0) {
 				fprintf(stderr, "myproxy ~ handle_connection(): failed to write to SSL connection. %d: %s\n", SSL_get_error(ssl, ssl_res), strerror(errno));
