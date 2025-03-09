@@ -531,46 +531,38 @@ bool verify_peer_cert(struct connection *conn) {
 	return false;
 }
 
+// TODO: ooo cert chain?
+// TODO: strings for forbidden? more specificity
+
 void perform_proxy(struct connection *conn) {
-	int bytes_read, bytes_written, ssl_res, res;
+	int bytes_read, bytes_written;//, ssl_res, res;
 
 	int serv_conn_closed = 0, client_conn_closed = 0;
 
-	int bytes_written;
-
 	char buf[BUFFER_SIZE + 1] = { 0 };
-	char client_buf[BUFFER_SIZE + 1] = { 0 };
-	char serv_buf[BUFFER_SIZE + 1] = { 0 };
+	// char client_buf[BUFFER_SIZE + 1] = { 0 };
+	// char serv_buf[BUFFER_SIZE + 1] = { 0 };
 
-	// struct pollfd client_poll = { conn->clientfd, POLLIN, 1000 };
+	struct pollfd client_poll = { conn->clientfd, POLLIN, 0 };
 	struct pollfd serv_poll = { conn->servfd, POLLIN, 0 };
 
 	while (!serv_conn_closed && !client_conn_closed) {
 		do {
 			if (poll(&serv_poll, 1, 1000) > 0) {
 				printf("reading from server...\n");
-				memset(serv_buf, 0, sizeof(serv_buf));
-				if ((bytes_read = SSL_read(conn->ssl, serv_buf, sizeof(serv_buf) - 1)) < 0) {
+				memset(buf, 0, sizeof(buf));
+				if ((bytes_read = SSL_read(conn->ssl, buf, sizeof(buf) - 1)) < 0) {
 					fprintf(stderr, "myproxy ~ handle_connection(): failed to read from SSL connection. %d: %s\n", SSL_get_error(conn->ssl, bytes_read), strerror(errno));
 					close_connection(conn, 1);
 				}
 			} else {
 				printf("nothing available from server...\n");
-				if ((bytes_written = SSL_write(conn->ssl, client_buf, bytes_read)) <= 0) {
-					fprintf(stderr, "myproxy ~ handle_connection(): failed to write to SSL connection. %d: %s\n", SSL_get_error(conn->ssl, bytes_written), strerror(errno));
-					serv_conn_closed = 1;
-				}
-			}
-			
-			if (bytes_read == 0 || serv_conn_closed) {
-				printf("breaking\n");
-				serv_conn_closed = 1;
-				break;
+				bytes_read = 0;
 			}
 
-			printf("\n\n====================\nSERVER:\n%s\n====================\n", serv_buf);
+			printf("\n\n====================\nSERVER:\n%s\n====================\n", buf);
 
-			if ((bytes_written = write_n_bytes(conn->clientfd, serv_buf, bytes_read)) < 0) {
+			if ((bytes_written = write_n_bytes(conn->clientfd, buf, bytes_read)) <= 0) {
 				fprintf(stderr,  "myproxy ~ handle_connection(): failed to write to client.\n");
 				client_conn_closed = 1;
 			}
@@ -579,25 +571,33 @@ void perform_proxy(struct connection *conn) {
 		if (serv_conn_closed || client_conn_closed) break;
 
 		do {
-			memset(buf, 0, sizeof(buf));
-			if ((res = read_n_bytes(conn->clientfd, buf, sizeof(buf) - 1)) < 0) {
-				fprintf(stderr, "myproxy ~ handle_connection(): failed to read from client.\n");
-				close_connection(conn, 1);
+			if (poll(&client_poll, 1, 1000) > 0) {
+				printf("reading from client...\n");
+				memset(buf, 0, sizeof(buf));
+				if ((bytes_read = read_n_bytes(conn->clientfd, buf, sizeof(buf) - 1)) < 0) {
+					fprintf(stderr, "myproxy ~ handle_connection(): failed to read from client.\n");
+					close_connection(conn, 1);
+				}
+			} else {
+				printf("nothing available from client...\n");
+				bytes_read = 0;
 			}
-
-			if (res == 0) {
-				client_conn_closed = 1;
-				break;
-			}
+			
+			// if (res == 0) {
+			// 	client_conn_closed = 1;
+			// 	break;
+			// }
 
 			printf("\n\n====================\nCLIENT:\n%s\n====================\n", buf);
 
-			if ((ssl_res = SSL_write(conn->ssl, buf, res)) < 0) {
-				fprintf(stderr, "myproxy ~ handle_connection(): failed to write to SSL connection. %d: %s\n", SSL_get_error(conn->ssl, ssl_res), strerror(errno));
+			if ((bytes_written = SSL_write(conn->ssl, buf, bytes_read)) <= 0) {
+				fprintf(stderr, "myproxy ~ handle_connection(): failed to write to SSL connection. %d: %s\n", SSL_get_error(conn->ssl, bytes_written), strerror(errno));
 				// close_connection(conn, 1);
 				serv_conn_closed = 1;
 			}
-		} while (ssl_res > 0 && res > 0);
+		} while (bytes_written > 0 && bytes_read > 0);
+
+		if (serv_conn_closed || client_conn_closed) break;
 	}
 }
 
