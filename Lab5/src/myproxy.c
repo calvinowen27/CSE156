@@ -260,7 +260,8 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 		close_connection(conn, 1);
 	}
 
-	prev_end += parse_req_line(conn, buf);
+	int port = -1;
+	prev_end += parse_req_line(conn, buf, &port);
 
 	char *serv_ip = NULL;
 	prev_end += parse_header_fields(conn, buf + prev_end, forbidden_addrs, &serv_ip);
@@ -275,8 +276,6 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 	if (!conn->xff_field) {
 		char xff_hf[56] = { 0 };
 		
-		// TODO: check for more proxies desired?
-		// TODO: make sure this gets appended if header field already exists
 		sprintf(xff_hf, "X-Forwarded-For: %s" DOUBLE_EMPTY_LINE, conn->client_ip);
 		
 		if (append_buf(&conn->pkt_header, &conn->pkt_header_size, xff_hf, strlen(xff_hf)) < 0) {
@@ -293,7 +292,7 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 	// find start of body from first packet
 	char *pkt_body_start = buf + prev_end + 2;
 
-	connect_to_server(conn, serv_ip);
+	connect_to_server(conn, serv_ip, port == -1 ? HTTPS_PORT : port);
 	free(serv_ip);
 
 	printf("SSL connection complete.\n");
@@ -327,7 +326,7 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 	printf("\n!!!!!!!!!!!!!!!\nCONNECTION CLOSED\n!!!!!!!!!!!!!!!\n");
 }
 
-int parse_req_line(struct connection *conn, char *pkt_buf) {
+int parse_req_line(struct connection *conn, char *pkt_buf, int *port) {
 	regmatch_t pmatch[4];
 	
 	int reg_res;
@@ -360,7 +359,12 @@ int parse_req_line(struct connection *conn, char *pkt_buf) {
 	url[sizeof(url) - 1] = 0;
 	memcpy(url, pkt_buf + pmatch[2].rm_so, sizeof(url) - 1);
 
+	strtok(url, ":");
+	char *port_buf = strtok(NULL, ":");
+	if (port_buf != NULL) (*port) = atoi(port_buf);
+
 	printf("url: %s\n", url);
+	printf("PORT: %d\n", *port);
 
 	char version[(pmatch[3].rm_eo - pmatch[3].rm_so) + 1];
 	version[sizeof(version) - 1] = 0;
@@ -459,10 +463,12 @@ int parse_header_fields(struct connection *conn, char *pkt_buf, struct addrinfo 
 	return end;
 }
 
-void connect_to_server(struct connection *conn, char *serv_ip) {
+void connect_to_server(struct connection *conn, char *serv_ip, int port) {
 	struct sockaddr_in servaddr;
 
-	conn->servfd = init_socket(&servaddr, serv_ip, 443, AF_INET, SOCK_STREAM, 0, false);
+	printf("connecting to server %s port %d.\n", serv_ip, port);
+
+	conn->servfd = init_socket(&servaddr, serv_ip, port, AF_INET, SOCK_STREAM, 0, false);
 	if (conn->servfd < 0) {
 		fprintf(stderr, "myproxy ~ handle_connection(): failed to initialize server socket.\n");
 		close_connection(conn, 1);

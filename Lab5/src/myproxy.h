@@ -57,10 +57,10 @@ u_int32_t sig_queued(int sig);
 
 void handle_connection(struct connection *conn, struct addrinfo **forbidden_addrs);
 
-int parse_req_line(struct connection *conn, char *pkt_buf);
+int parse_req_line(struct connection *conn, char *pkt_buf, int *port);
 int parse_header_fields(struct connection *conn, char *pkt_buf, struct addrinfo **forbidden_addrs, char **host_ipv4);
 
-void connect_to_server(struct connection *conn, char *serv_ip);
+void connect_to_server(struct connection *conn, char *serv_ip, int port);
 bool verify_peer_cert(struct connection *conn);
 void perform_proxy(struct connection *conn);
 
