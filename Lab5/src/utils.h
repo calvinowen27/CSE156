@@ -42,6 +42,8 @@ int create_file_directory(const char *file_path);
 
 bool sockaddrs_eq(struct sockaddr sockaddr1, struct sockaddr sockaddr2);
 
+char *get_addr_ipv4(struct sockaddr_in *addr);
+
 
 
 #endif

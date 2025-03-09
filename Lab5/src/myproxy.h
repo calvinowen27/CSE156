@@ -1,7 +1,7 @@
 #ifndef MYPROXY_INCLUDE
 #define MYPROXY_INCLUDE
 
-#define OPTIONS "p:a:l:"
+#define OPTIONS "p:a:l:u"
 #define MAX_PROCESSES 50
 #define BUFFER_SIZE 4096
 #define NUM_FBDN_IPS 1000
@@ -26,17 +26,21 @@
 
 struct connection {
 	int clientfd;
+	struct sockaddr_in clientaddr;
+
 	int servfd;
 
 	char *pkt_header;
 	ssize_t pkt_header_size;
 	regex_t reg;
 
-	struct sockaddr_in clientaddr;
-	socklen_t clientaddr_size;
+	char *proxy_ip;
+	char *client_ip;
 
-	struct sockaddr_in sockaddr;
-	socklen_t sockaddr_size;
+	bool trusting;
+
+	SSL *ssl;
+	SSL_CTX *ctx;
 };
 
 void usage(char *exec);
@@ -49,8 +53,8 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 
 int send_response(struct connection *conn, int status_code);
 
-int test(char *dest_url);
-int create_socket(char url_str[], BIO *out);
+int init_connection(struct connection *conn, int clientfd, struct sockaddr_in proxyaddr, struct sockaddr_in clientaddr, bool trusting);
+void free_connection(struct connection *conn);
 
 int resolve_host(char *hostname, struct addrinfo **res);
 int host_forbidden(struct addrinfo *host, struct addrinfo **forbidden_addrs);

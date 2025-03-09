@@ -267,3 +267,23 @@ bool sockaddrs_eq(struct sockaddr sockaddr1, struct sockaddr sockaddr2) {
 
 	return true;
 }
+
+char *get_addr_ipv4(struct sockaddr_in *addr) {
+	char *dst = calloc(INET_ADDRSTRLEN, sizeof(char));
+	if (!dst) {
+		fprintf(stderr, "utils ~ get_addr_ipv4(): failed to allocate ip string.\n");
+		return NULL;
+	}
+	
+	char ip_buf[INET_ADDRSTRLEN] = { 0 };
+	if (inet_ntop(AF_INET, addr, ip_buf, sizeof(ip_buf)) == NULL) {
+		fprintf(stderr, "utils ~ get_addr_ipv4(): failed to get ip address: %s\n", strerror(errno));
+		free(dst);
+		return NULL;
+	}
+	char *ip = strtok(ip_buf, ":"); // remove port if included
+
+	strcpy(dst, ip);
+
+	return dst;
+}

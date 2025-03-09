@@ -15,6 +15,7 @@
 #include <stdbool.h>
 #include <netdb.h>
 #include <sys/types.h>
+#include <poll.h>
 
 #include <openssl/bio.h>
 #include <openssl/ssl.h>
@@ -33,12 +34,13 @@ void usage(char *exec) {
 		"   Runs a simple HTTP <--> HTTPS proxy server.\n"
 		"\n"
 		"USAGE\n"
-		"   %s [-p:a:l:] [-p listen port] [-a forbidden sites file path] [-l access log file path]\n"
+		"   %s [-p:a:l:u] [-p listen port] [-a forbidden sites file path] [-l access log file path] [-u]\n"
 		"\n"
 		"OPTIONS\n"
 		"   -p listen port  				port for proxy server to listen (defualt is 9090).\n"
 		"   -a forbidden sites file path	path to file that holds forbidden site list.\n"
-		"	-l access log file path			path to file where access log info should be written (default is \"access.log\").\n",
+		"	-l access log file path			path to file where access log info should be written (default is \"access.log\").\n"
+		"	-untrusted						allow proxy to connect to untrusted IPs.\n",
 		exec);
 }
 
@@ -52,6 +54,8 @@ int main (int argc, char **argv) {
 
 	int port = 9090; // TODO: check
 	char *forbidden_fp = NULL, *access_log_fp = "access.log";
+
+	bool trusting = false;
 
 	// parse args
 	int opt = 0;
@@ -70,6 +74,9 @@ int main (int argc, char **argv) {
 		case 'l':
 			access_log_fp = optarg;
 		break;
+		case 'u':
+			trusting = true;
+		break;
 		default:
 			usage(argv[0]); /* Invalid options, show usage */
 		return EXIT_FAILURE;
@@ -81,13 +88,6 @@ int main (int argc, char **argv) {
 		usage(argv[0]);
 		exit(1);
 	}
-
-	// open files
-	// int fbdn_fd = open(forbidden_fp, O_RDONLY, 0700);
-	// if (fbdn_fd < 0) {
-	// 	fprintf(stderr, "myproxy ~ main(): encountered error opening forbidden sites file %s: %s\n", forbidden_fp, strerror(errno));
-	// 	exit(1);
-	// }
 
 	struct addrinfo *forbidden_addrs[NUM_FBDN_IPS] = { NULL };
 	if (load_forbidden_ips(forbidden_fp, forbidden_addrs) < 0) {
@@ -102,11 +102,10 @@ int main (int argc, char **argv) {
 	}
 
 	// init listen socket
-	struct sockaddr_in sockaddr;
-	memset(&sockaddr, 0, sizeof(sockaddr));
-	socklen_t sockaddr_size = sizeof(struct sockaddr_in);
+	struct sockaddr_in proxyaddr;
+	memset(&proxyaddr, 0, sizeof(proxyaddr));
 
-	int listen_fd = init_socket(&sockaddr, NULL, port, AF_INET, SOCK_STREAM, IPPROTO_TCP, true);
+	int listen_fd = init_socket(&proxyaddr, NULL, port, AF_INET, SOCK_STREAM, IPPROTO_TCP, true);
 	if (listen_fd < 0) {
 		fprintf(stderr, "myproxy ~ main(): failed to initialize socket with port %d: %s\n", port, strerror(errno));
 		exit(1);
@@ -126,7 +125,7 @@ int main (int argc, char **argv) {
 
 	int processes = 0;
 
-	int connfd;
+	int clientfd;
 	while (1) {
 		if (handle_sigs(&processes, forbidden_fp, forbidden_addrs) < 0) {
 			fprintf(stderr, "myproxy ~ main(): encountered error handling queued signals.\n");
@@ -136,31 +135,34 @@ int main (int argc, char **argv) {
 		struct sockaddr_in clientaddr;
 		socklen_t clientaddr_size = sizeof(struct sockaddr_in);
 		
-		if ((connfd = accept(listen_fd, (struct sockaddr *)&clientaddr, &clientaddr_size)) < 0 && errno != EAGAIN) {
+		if ((clientfd = accept(listen_fd, (struct sockaddr *)&clientaddr, &clientaddr_size)) < 0 && errno != EAGAIN) {
 			fprintf(stderr, "myproxy ~ main(): failed to accept connection on port %d: %s\n", port, strerror(errno));
 			exit(1); // TODO: maybe don't exit? cleanup
 		}
 
-		if (connfd < 0) continue;
-
-		struct connection conn;
-		conn.pkt_header = NULL;
-		conn.sockaddr = sockaddr;
-		conn.sockaddr_size = sockaddr_size;
-
-		conn.clientaddr = clientaddr;
-		conn.clientaddr_size = clientaddr_size;
-
-		conn.clientfd = connfd;
+		if (clientfd < 0) continue;
 
 		if (processes == MAX_PROCESSES) {
 			fprintf(stderr, "myproxy ~ main(): cannot accept connection, too many processes currently executing.\n");
 			continue; // TODO: check?
 		}
 
+		struct connection conn;
+		conn.pkt_header = NULL;
+
+		conn.clientaddr = clientaddr;
+
+		conn.clientfd = clientfd;
+
+		if (init_connection(&conn, clientfd, clientaddr, proxyaddr, trusting) < 0) {
+			fprintf(stderr, "myproxy ~ main(): failed to initialize connection.\n");
+			close_connection(&conn, 1);
+		}
+
 		// TODO: map child pid to connection ip
 		if (fork() == 0) {
 			handle_connection(&conn, forbidden_addrs); // TODO: check error return? probably not, error handling internally
+			close_connection(&conn, 0);
 		} else {
 			processes ++;
 
@@ -173,6 +175,74 @@ int main (int argc, char **argv) {
 	close(log_fd);
 
 	return 0;
+}
+
+int init_connection(struct connection *conn, int clientfd, struct sockaddr_in clientaddr, struct sockaddr_in proxyaddr, bool trusting) {
+	conn->clientfd = clientfd;
+	conn->clientaddr = clientaddr;
+
+	conn->pkt_header = NULL;
+
+	// save ip of proxy
+	conn->proxy_ip = get_addr_ipv4(&proxyaddr);
+	if (!conn->proxy_ip) {
+		fprintf(stderr, "myproxy ~ init_connection(): failed to get proxy ip string.\n");
+		return -1;
+	}
+
+	// save ip of client
+	conn->client_ip = get_addr_ipv4(&clientaddr);
+	if (!conn->client_ip) {
+		fprintf(stderr, "myproxy ~ init_connection(): failed to get client ip string.\n");
+		return -1;
+	}
+
+	conn->trusting = trusting;
+
+	// initialize ctx
+	const SSL_METHOD *ssl_method = SSLv23_client_method();
+	conn->ctx = SSL_CTX_new(ssl_method);
+
+	if (!conn->ctx) {
+		fprintf(stderr, "myproxy ~ init_connection(): failed to initialize SSL CTX.\n");
+		free(conn->proxy_ip);
+		return -1;
+	}
+
+	SSL_CTX_set_options(conn->ctx, SSL_OP_ALL | SSL_OP_NO_SSLv2);
+
+	// initialize ssl
+	conn->ssl = SSL_new(conn->ctx);
+
+	if (!conn->ssl) {
+		fprintf(stderr, "myproxy ~ handle_connection(): failed to initialize SSL object.\n");
+		free(conn->proxy_ip);
+		SSL_CTX_free(conn->ctx);
+		return -1;
+	}
+
+	return 0;
+}
+
+void free_connection(struct connection *conn) {
+	if (conn->proxy_ip) free(conn->proxy_ip);
+	conn->proxy_ip = NULL;
+
+	if (conn->client_ip) free(conn->client_ip);
+	conn->client_ip = NULL;
+
+	if (conn->pkt_header) free(conn->pkt_header);
+	conn->pkt_header = NULL;
+
+	if (conn->ctx) SSL_CTX_free(conn->ctx);
+	conn->ctx = NULL;
+
+	SSL_shutdown(conn->ssl);
+
+	if (conn->ssl) SSL_free(conn->ssl);
+	conn->ssl = NULL;
+
+	regfree(&conn->reg);
 }
 
 void handle_connection(struct connection *conn, struct addrinfo **forbidden_addrs) {
@@ -339,22 +409,8 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 
 	char xff_hf[56] = { 0 };
 
-	char client_ip_buf[INET_ADDRSTRLEN] = { 0 };
-	if (inet_ntop(AF_INET, &conn->clientaddr, client_ip_buf, sizeof(client_ip_buf)) == NULL) {
-		fprintf(stderr, "myproxy ~ handle_connection(): failed to get client ip address: %s\n", strerror(errno));
-		close_connection(conn, 1);
-	}
-	char *client_ip = strtok(client_ip_buf, ":"); // remove port if included
-
-	char proxy_ip_buf[INET_ADDRSTRLEN] = { 0 };
-	if (inet_ntop(AF_INET, &conn->sockaddr, proxy_ip_buf, sizeof(proxy_ip_buf)) == NULL) {
-		fprintf(stderr, "myproxy ~ handle_connection(): failed to get proxy ip address: %s\n", strerror(errno));
-		close_connection(conn, 1);
-	}
-	char *proxy_ip = strtok(proxy_ip_buf, ":"); // remove port if included
-
 	// TODO: check for more proxies desired?
-	sprintf(xff_hf, "X-Forwarded-For: %s %s" DOUBLE_EMPTY_LINE, client_ip, proxy_ip);
+	sprintf(xff_hf, "X-Forwarded-For: %s %s" DOUBLE_EMPTY_LINE, conn->client_ip, conn->proxy_ip);
 
 	if ((conn->pkt_header_size = append_buf(&conn->pkt_header, conn->pkt_header_size, xff_hf, strlen(xff_hf))) < 0) {
 		fprintf(stderr, "myproxy ~ handle_connection(): failed to add X-Forward-For header field to pkt header.\n");
@@ -380,17 +436,6 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 	const SSL_METHOD *ssl_method = SSLv23_client_method();
 	SSL_CTX *ctx = SSL_CTX_new(ssl_method);
 	SSL_CTX_set_options(ctx, SSL_OP_ALL | SSL_OP_NO_SSLv2);
-	// BIO *bio = BIO_new_ssl_connect(ctx);
-
-	/* verify truststore, check cert */ 
-    // if (!SSL_CTX_load_verify_locations(ctx, "/etc/ssl/certs/ca-bundle.trust.crt", "/etc/ssl/certs/")) {
-	// 	fprintf(stderr, "myproxy ~ handle_connection(): invalid SSL certificate.\n");
-	// 	close_connection(conn, 1);
-	// }
-
-	// SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
-
-	// SSL_CTX_set_mode(ctx, CLIENT)
 
 	SSL *ssl = SSL_new(ctx);
 
@@ -523,23 +568,50 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 
 	int res;
 
-	while (1) {
+	int serv_conn_closed = 0, client_conn_closed = 0;
+
+	int bytes_read, bytes_written;
+
+	char client_buf[BUFFER_SIZE + 1] = { 0 };
+	char serv_buf[BUFFER_SIZE + 1] = { 0 };
+
+	// struct pollfd client_poll = { conn->clientfd, POLLIN, 1000 };
+	struct pollfd serv_poll = { conn->servfd, POLLIN, 0 };
+
+	while (!serv_conn_closed && !client_conn_closed) {
 		do {
-			memset(buf, 0, sizeof(buf));
-			if ((ssl_res = SSL_read(ssl, buf, sizeof(buf) - 1)) < 0) {
-				fprintf(stderr, "myproxy ~ handle_connection(): failed to read from SSL connection. %d: %s\n", SSL_get_error(ssl, ssl_res), strerror(errno));
-				close_connection(conn, 1);
+			if (poll(&serv_poll, 1, 1000) > 0) {
+				printf("reading from server...\n");
+				memset(serv_buf, 0, sizeof(serv_buf));
+				if ((bytes_read = SSL_read(ssl, serv_buf, sizeof(serv_buf) - 1)) < 0) {
+					fprintf(stderr, "myproxy ~ handle_connection(): failed to read from SSL connection. %d: %s\n", SSL_get_error(ssl, bytes_read), strerror(errno));
+					close_connection(conn, 1);
+				}
+			} else {
+				printf("nothing available from server...\n");
+				if ((bytes_written = SSL_write(ssl, client_buf, bytes_read)) <= 0) {
+					fprintf(stderr, "myproxy ~ handle_connection(): failed to write to SSL connection. %d: %s\n", SSL_get_error(ssl, bytes_written), strerror(errno));
+					// close_connection(conn, 1);
+					serv_conn_closed = 1;
+				}
+			}
+			
+			if (bytes_read == 0 || serv_conn_closed) {
+				printf("breaking\n");
+				serv_conn_closed = 1;
+				break;
 			}
 
-			if (ssl_res == 0) break;
+			printf("\n\n====================\nSERVER:\n%s\n====================\n", serv_buf);
 
-			printf("\n\n====================\nSERVER:\n%s\n====================\n", buf);
-
-			if ((res = write_n_bytes(conn->clientfd, buf, ssl_res)) < 0) {
+			if ((bytes_written = write_n_bytes(conn->clientfd, serv_buf, bytes_read)) < 0) {
 				fprintf(stderr,  "myproxy ~ handle_connection(): failed to write to client.\n");
-				close_connection(conn, 1);
+				// close_connection(conn, 1);
+				client_conn_closed = 1;
 			}
-		} while (ssl_res > 0 && res > 0);
+		} while (bytes_written > 0 && bytes_read > 0);
+
+		if (serv_conn_closed || client_conn_closed) break;
 
 		do {
 			memset(buf, 0, sizeof(buf));
@@ -548,47 +620,24 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 				close_connection(conn, 1);
 			}
 
-			if (res == 0) break;
+			if (res == 0) {
+				client_conn_closed = 1;
+				break;
+			}
 
 			printf("\n\n====================\nCLIENT:\n%s\n====================\n", buf);
 
 			if ((ssl_res = SSL_write(ssl, buf, res)) < 0) {
 				fprintf(stderr, "myproxy ~ handle_connection(): failed to write to SSL connection. %d: %s\n", SSL_get_error(ssl, ssl_res), strerror(errno));
-				close_connection(conn, 1);
-			}			
+				// close_connection(conn, 1);
+				serv_conn_closed = 1;
+			}
 		} while (ssl_res > 0 && res > 0);
 	}
 
-	// if (BIO_do_connect(bio) <= 0) {
-	// 
-	// }
-
-
-
-	// read header into buffer and parse fields
-	// resolve hostname and get ip
-	// check if forbidden
-	// connect to ip using SSL
-	// while connection alive
-		// forward packet to server
-		// wait for response and decrypt
-		// forward packet to client
-
-	
-	SSL_shutdown(ssl);
-	SSL_free(ssl);
-	SSL_CTX_free(ctx);
-	// BIO_free(bio);
-
 	close_connection(conn, 0);
-
-	// free(pkt_header);
-
-	// regfree(&reg);
-
-	// close(conn.clientfd);
-
-	// exit(0); // terminate process
+	
+	printf("\n!!!!!!!!!!!!!!!\nCONNECTION CLOSED\n!!!!!!!!!!!!!!!\n");
 }
 
 int send_response(struct connection *conn, int status_code) {
@@ -683,15 +732,13 @@ int host_forbidden(struct addrinfo *host, struct addrinfo **forbidden_addrs) {
 }
 
 void close_connection(struct connection *conn, int exit_code) {
-	if (conn == NULL) {
+	if (!conn) {
 		fprintf(stderr, "myproxy ~ close_connection(): cannot close connection for NULL connection ptr.\n");
 		exit(1);
 	}
+
+	free_connection(conn);
 	
-	free(conn->pkt_header);
-
-	regfree(&conn->reg);
-
 	close(conn->clientfd);
 	close(conn->servfd);
 
