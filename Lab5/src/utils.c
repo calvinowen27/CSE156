@@ -125,9 +125,9 @@ int pass_n_bytes(int infd, int outfd, int n) {
 	return 0;
 }
 
-ssize_t append_buf(char **buf, size_t buf_size, char *addtl, size_t addtl_size) {
-	ssize_t new_size = buf_size;
-	if (strlen(*buf) + addtl_size > buf_size) {
+int append_buf(char **buf, size_t *buf_size, char *addtl, size_t addtl_size) {
+	size_t new_size = *buf_size;
+	if (strlen(*buf) + addtl_size > *buf_size) {
 		(*buf) = realloc(*buf, strlen(*buf) + addtl_size);
 		new_size = strlen(*buf) + addtl_size;
 		if (*buf == NULL) {
@@ -136,11 +136,13 @@ ssize_t append_buf(char **buf, size_t buf_size, char *addtl, size_t addtl_size) 
 		}
 	}
 
-	memset((*buf) + strlen(*buf), 0, buf_size - strlen(*buf));
+	memset((*buf) + strlen(*buf), 0, (*buf_size) - strlen(*buf));
 
 	memcpy((*buf) + strlen(*buf), addtl, addtl_size);
 
-	return new_size;
+	(*buf_size) = new_size;
+
+	return 0;
 }
 
 int shift_file_contents(int fd, off_t start_idx, int amount) {
@@ -276,7 +278,7 @@ char *get_addr_ipv4(struct sockaddr_in *addr) {
 	}
 	
 	char ip_buf[INET_ADDRSTRLEN] = { 0 };
-	if (inet_ntop(AF_INET, addr, ip_buf, sizeof(ip_buf)) == NULL) {
+	if (inet_ntop(AF_INET, &addr->sin_addr, ip_buf, sizeof(ip_buf)) == NULL) {
 		fprintf(stderr, "utils ~ get_addr_ipv4(): failed to get ip address: %s\n", strerror(errno));
 		free(dst);
 		return NULL;

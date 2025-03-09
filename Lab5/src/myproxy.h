@@ -8,6 +8,12 @@
 
 #define HTTPS_PORT 443
 
+#define HTTP_FORBIDDEN 403
+#define HTTP_NOT_IMPLEMENTED 501
+#define HTTP_BAD_GATEWAY 502
+#define HTTP_GATEWAY_TIMEOUT 504
+#define HTTP_VERSION_NO_SUPPORT 505
+
 #define IP_REGEX "(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])(\n+)"
 #define DOMAIN_REGEX "(([a-zA-Z0-9\\-_])+)((\\.[a-zA-Z0-9\\-_/]+)+)(\n+)"
 
@@ -31,10 +37,10 @@ struct connection {
 	int servfd;
 
 	char *pkt_header;
-	ssize_t pkt_header_size;
+	size_t pkt_header_size;
 	regex_t reg;
+	bool xff_field;
 
-	char *proxy_ip;
 	char *client_ip;
 
 	bool trusting;
@@ -51,9 +57,16 @@ u_int32_t sig_queued(int sig);
 
 void handle_connection(struct connection *conn, struct addrinfo **forbidden_addrs);
 
+int parse_req_line(struct connection *conn, char *pkt_buf);
+int parse_header_fields(struct connection *conn, char *pkt_buf, struct addrinfo **forbidden_addrs, char **host_ipv4);
+
+void connect_to_server(struct connection *conn, char *serv_ip);
+bool verify_peer_cert(struct connection *conn);
+void perform_proxy(struct connection *conn);
+
 int send_response(struct connection *conn, int status_code);
 
-int init_connection(struct connection *conn, int clientfd, struct sockaddr_in proxyaddr, struct sockaddr_in clientaddr, bool trusting);
+int init_connection(struct connection *conn, int clientfd, struct sockaddr_in clientaddr, bool trusting);
 void free_connection(struct connection *conn);
 
 int resolve_host(char *hostname, struct addrinfo **res);
