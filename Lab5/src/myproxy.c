@@ -48,10 +48,6 @@ int main (int argc, char **argv) {
 	signal(SIGCHLD, &sig_catcher);
 	signal(SIGINT, &sig_catcher);
 
-	SSL_library_init();
-	SSL_load_error_strings();
-	OpenSSL_add_all_algorithms();
-
 	int port = 9090; // TODO: check
 	char *forbidden_fp = NULL, *access_log_fp = "access.log";
 
@@ -82,19 +78,23 @@ int main (int argc, char **argv) {
 			return EXIT_FAILURE;
 		}
 	}
-
+// TODO: check for ill formatted requests
+// TODO: signal forwarding to child processes?
 	if (forbidden_fp == NULL) {
 		printf("Need to specify forbidden sites file path using -a flag.\n");
 		usage(argv[0]);
 		exit(1);
 	}
 
-	struct addrinfo *forbidden_addrs[NUM_FBDN_IPS] = { NULL };
-	if (load_forbidden_ips(forbidden_fp, forbidden_addrs) < 0) {
+	char *forbidden_hosts[NUM_FBDN_HOSTS] = { NULL };
+
+	// struct addrinfo *forbidden_addrs[NUM_FBDN_HOSTS] = { NULL };
+	if (load_forbidden_ips(forbidden_fp, forbidden_hosts) < 0) {
 		fprintf(stderr, "myproxy ~ main(): failed to load forbidden_ips from file: %s\n", forbidden_fp);
 		exit(1);
 	}
 
+	// TODO: actually write the access log code
 	int log_fd = open(access_log_fp, O_RDWR | O_CREAT, 0700); // TODO: make sure new entries are appended
 	if (log_fd < 0) {
 		fprintf(stderr, "myproxy ~ main(): encountered error opening access log file %s: %s\n", access_log_fp, strerror(errno));
@@ -127,7 +127,7 @@ int main (int argc, char **argv) {
 
 	int clientfd;
 	while (1) {
-		if (handle_sigs(&processes, forbidden_fp, forbidden_addrs) < 0) {
+		if (handle_sigs(&processes, forbidden_fp, forbidden_hosts) < 0) {
 			fprintf(stderr, "myproxy ~ main(): encountered error handling queued signals.\n");
 			exit(1); // TODO: cleanup?
 		}
@@ -142,6 +142,8 @@ int main (int argc, char **argv) {
 		}
 
 		if (clientfd < 0) continue;
+
+		// printf("PORT FROM CLIENTADDR: %d\n", clientaddr.sin_port);
 
 		if (processes == MAX_PROCESSES) {
 			fprintf(stderr, "myproxy ~ main(): cannot accept connection, too many processes currently executing.\n");
@@ -162,7 +164,7 @@ int main (int argc, char **argv) {
 
 		// TODO: map child pid to connection ip
 		if (fork() == 0) {
-			handle_connection(&conn, forbidden_addrs); // TODO: check error return? probably not, error handling internally
+			handle_connection(&conn, forbidden_hosts); // TODO: check error return? probably not, error handling internally
 			close_connection(&conn, 0);
 		} else {
 			processes ++;
@@ -194,6 +196,10 @@ int init_connection(struct connection *conn, int clientfd, struct sockaddr_in cl
 	}
 
 	conn->trusting = trusting;
+
+	SSL_library_init();
+	SSL_load_error_strings();
+	OpenSSL_add_all_algorithms();
 
 	// initialize ctx
 	const SSL_METHOD *ssl_method = SSLv23_client_method();
@@ -233,7 +239,7 @@ void free_connection(struct connection *conn) {
 	regfree(&conn->reg);
 }
 
-void handle_connection(struct connection *conn, struct addrinfo **forbidden_addrs) {
+void handle_connection(struct connection *conn, char **forbidden_hosts) {
 	// make sure connection clientfd blocks for read
 	if (fcntl(conn->clientfd, F_SETFL, fcntl(conn->clientfd, F_GETFL, 0) & ~O_NONBLOCK) < 0) {
 		fprintf(stderr, "myproxy ~ handle_connection(): failed to set listen socket non-blocking\n");
@@ -260,11 +266,11 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 		close_connection(conn, 1);
 	}
 
-	int port = -1;
-	prev_end += parse_req_line(conn, buf, &port);
-
+	prev_end += parse_req_line(conn, buf);
+	
 	char *serv_ip = NULL;
-	prev_end += parse_header_fields(conn, buf + prev_end, forbidden_addrs, &serv_ip);
+	int port = -1;
+	prev_end += parse_header_fields(conn, buf + prev_end, forbidden_hosts, &serv_ip, &port);
 
 	if (!serv_ip) {
 		fprintf(stderr, "myproxy ~ handle_connection(): failed to get server ip from header fields.\n");
@@ -272,6 +278,7 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 	}
 
 	printf("SERVER IP: %s\n", serv_ip);
+	printf("SERVER PORT: %d\n", port);
 
 	if (!conn->xff_field) {
 		char xff_hf[56] = { 0 };
@@ -326,7 +333,7 @@ void handle_connection(struct connection *conn, struct addrinfo **forbidden_addr
 	printf("\n!!!!!!!!!!!!!!!\nCONNECTION CLOSED\n!!!!!!!!!!!!!!!\n");
 }
 
-int parse_req_line(struct connection *conn, char *pkt_buf, int *port) {
+int parse_req_line(struct connection *conn, char *pkt_buf) {
 	regmatch_t pmatch[4];
 	
 	int reg_res;
@@ -339,13 +346,10 @@ int parse_req_line(struct connection *conn, char *pkt_buf, int *port) {
 	if ((reg_res = regexec(&conn->reg, pkt_buf, 4, pmatch, 0)) != 0) {
 		fprintf(stderr, "myproxy ~ parse_req_line(): regex() failed for request line.\n");
 
-		if (reg_res != REG_NOMATCH) {	
-			close_connection(conn, 1);
+		if (reg_res == REG_NOMATCH) {	
+			fprintf(stderr, "myproxy ~ handle_connection(): didn't find match for request line...\n");
 		}
-	}
 
-	if (reg_res == REG_NOMATCH) {
-		fprintf(stderr, "myproxy ~ handle_connection(): didn't find match for request line...\n");
 		close_connection(conn, 1);
 	}
 
@@ -359,24 +363,19 @@ int parse_req_line(struct connection *conn, char *pkt_buf, int *port) {
 	url[sizeof(url) - 1] = 0;
 	memcpy(url, pkt_buf + pmatch[2].rm_so, sizeof(url) - 1);
 
-	strtok(url, ":");
-	char *port_buf = strtok(NULL, ":");
-	if (port_buf != NULL) (*port) = atoi(port_buf);
-
 	printf("url: %s\n", url);
-	printf("PORT: %d\n", *port);
 
 	char version[(pmatch[3].rm_eo - pmatch[3].rm_so) + 1];
 	version[sizeof(version) - 1] = 0;
 	memcpy(version, pkt_buf + pmatch[3].rm_so, sizeof(version) - 1);
+	
+	printf("version: %s\n", version);
 
 	if (strcmp(version, "HTTP/1.1")) {
 		fprintf(stderr, "myproxy ~ handle_connection(): version not supported: %s\n", version);
 		send_response(conn, HTTP_VERSION_NO_SUPPORT);
 		close_connection(conn, 1);
 	}
-
-	printf("version: %s\n", version);
 
 	if (append_buf(&conn->pkt_header, &conn->pkt_header_size, pkt_buf + pmatch[0].rm_so, pmatch[0].rm_eo - pmatch[0].rm_so) < 0) {
 		fprintf(stderr, "myproxy ~ handle_connection(): failed to append request line to header buffer.\n");
@@ -392,7 +391,7 @@ int parse_req_line(struct connection *conn, char *pkt_buf, int *port) {
 	return pmatch[0].rm_eo;
 }
 
-int parse_header_fields(struct connection *conn, char *pkt_buf, struct addrinfo **forbidden_addrs, char **host_ipv4) {
+int parse_header_fields(struct connection *conn, char *pkt_buf, char **forbidden_hosts, char **host_ipv4, int *host_port) {
 	if (regcomp(&conn->reg, HEADER_FIELD_REGEX, REG_EXTENDED) < 0) {
 		fprintf(stderr, "myproxy ~ parse_header_fields(): regcomp() failed for header fields.\n");
 		close_connection(conn, 1);
@@ -426,18 +425,29 @@ int parse_header_fields(struct connection *conn, char *pkt_buf, struct addrinfo 
 
 		// resolve host ip and check if forbidden
 		if (!strcmp("Host", key)) {
+			strtok(val, ":");
+			char *port_buf = strtok(NULL, ":");
+			if (port_buf) (*host_port) = atoi(port_buf);
+
 			if (resolve_host(val, &hostaddr) < 0) {
 				fprintf(stderr, "myproxy ~ parse_header_fields(): failed to resolve host.\n");
 				send_response(conn, HTTP_BAD_GATEWAY);
 				close_connection(conn, 1);
 			}
 
-			if (host_forbidden(hostaddr, forbidden_addrs)) {
+			if (host_forbidden(val, forbidden_hosts)) {
 				send_response(conn, HTTP_FORBIDDEN);
 				close_connection(conn, 1);
 			}
 
-			(*host_ipv4) = get_addr_ipv4((struct sockaddr_in *)(hostaddr->ai_addr));
+			while (hostaddr != NULL) {
+				char *ip = get_addr_ipv4(((struct sockaddr_in *)(hostaddr->ai_addr)));
+				if (!host_forbidden(ip, forbidden_hosts)) {
+					(*host_ipv4) = get_addr_ipv4((struct sockaddr_in *)(hostaddr->ai_addr));
+					break;
+				}
+			}
+
 		} else if(!strcmp("X-Forwarded-For", key)) { // add client ip to list
 			char xff_append[strlen(conn->client_ip) + 2];
 			sprintf(xff_append, ", %s", conn->client_ip);
@@ -662,40 +672,26 @@ int resolve_host(char *hostname, struct addrinfo **res) {
 	return 0;
 }
 
-int host_forbidden(struct addrinfo *host, struct addrinfo **forbidden_addrs) {
-	printf("checking forbidden host\n");
+int host_forbidden(char *host, char **forbidden_hosts) {
+	printf("checking if host %s is forbidden\n", host);
 
 	if (host == NULL) {
-		fprintf(stderr, "myproxy ~ host_forbidden(): host ptr is NULL.\n");
+		fprintf(stderr, "myproxy ~ host_forbidden(): host is NULL.\n");
 		return -1;
 	}
 
-	if (forbidden_addrs == NULL) {
-		fprintf(stderr, "myproxy ~ host_forbidden(): forbidden_addrs is NULL.\n");
+	if (forbidden_hosts == NULL) {
+		fprintf(stderr, "myproxy ~ host_forbidden(): forbidden_hosts is NULL.\n");
 		return -1;
 	}
 
-	struct addrinfo *addr;
-	for (int i = 0; i < NUM_FBDN_IPS; i++) {
-		addr = forbidden_addrs[i];
+	char *check_host;
+	for (int i = 0; i < NUM_FBDN_HOSTS; i++) {
+		check_host = forbidden_hosts[i];
 
-		// printf("forbidden_addr[%d] is %s null\n", i, addr == NULL ? "" : "not");
+		if (check_host == NULL) break;
 
-		if (addr == NULL) break;
-
-		do {
-			// printf("do\n");
-			if (sockaddrs_eq(*addr->ai_addr, *host->ai_addr)) {
-				// printf("equal\n");
-				return 1;
-			}
-
-			// printf("sockaddr not equal\n");
-
-			addr = addr->ai_next;
-		} while (addr != NULL);
-
-		// printf("ok\n");
+		if (!strcmp(host, check_host)) return 1;
 	}
 
 	return 0;
@@ -721,10 +717,10 @@ void sig_catcher(int sig) {
 	sig_queue |= (((u_int32_t)1) << (sig - 1));
 }
 
-int handle_sigs(int *processes, const char *forbidden_fp, struct addrinfo **forbidden_addrs) {
+int handle_sigs(int *processes, const char *forbidden_fp, char **forbidden_hosts) {
 	// check each queued signal and process
 	if (sig_queued(SIGINT)) {
-		if (load_forbidden_ips(forbidden_fp, forbidden_addrs) < 0) {
+		if (load_forbidden_ips(forbidden_fp, forbidden_hosts) < 0) {
 			fprintf(stderr, "myproxy ~ handle_sigs(): encountered error reloading forbidden sites file.\n");
 			return -1;
 		}
@@ -744,9 +740,9 @@ u_int32_t sig_queued(int sig) {
 	return sig_queue & (((u_int32_t)1) << (sig - 1));
 }
 
-int load_forbidden_ips(const char *forbidden_fp, struct addrinfo **forbidden_addrs) {
+int load_forbidden_ips(const char *forbidden_fp, char **forbidden_hosts) {
 	// reset array
-	// for (int i = 0; i < NUM_FBDN_IPS; i++) {
+	// for (int i = 0; i < NUM_FBDN_HOSTS; i++) {
 	// 	if (forbidden_ips[i] != NULL) free(forbidden_ips[i]);
 	// 	forbidden_ips[i] = NULL;
 	// }
@@ -764,7 +760,7 @@ int load_forbidden_ips(const char *forbidden_fp, struct addrinfo **forbidden_add
 
 	char buf[257] = { 0 }, *line;
 	off_t off = 0;
-	int read_res, reg_res, addr_idx = 0;
+	int read_res, reg_res, host_idx = 0;
 	size_t line_idx = 0;
 
 	bool comment_line = false, new_buf;
@@ -855,35 +851,43 @@ int load_forbidden_ips(const char *forbidden_fp, struct addrinfo **forbidden_add
 			// printf("%zu\n", line_idx);
 			off += 1;
 
+			if (host_idx == NUM_FBDN_HOSTS) {
+				fprintf(stderr, "myproxy ~ load_forbidden_ips(): cannot load another ip from file, array full.\n");
+				break;
+			}
+
 			char *hostname = calloc(pmatch.rm_eo - pmatch.rm_so, sizeof(char));
 			memcpy(hostname, tline + pmatch.rm_so, (pmatch.rm_eo - pmatch.rm_so) - 1);
 
-			struct addrinfo *res = NULL;
+			forbidden_hosts[host_idx] = hostname;
+			host_idx ++;
 
-			if (resolve_host(hostname, &res) < 0) {
-				fprintf(stderr, "myproxy ~ handle_connection(): failed to resolve host.\n");
-				exit(1);
-			}
+			// struct addrinfo *res = NULL;
 
-			if (res != NULL) {	
-				u_int8_t *bytes = split_bytes((u_int32_t)((struct sockaddr_in *)res->ai_addr)->sin_addr.s_addr);
+			// if (resolve_host(hostname, &res) < 0) {
+			// 	fprintf(stderr, "myproxy ~ handle_connection(): failed to resolve host.\n");
+			// 	exit(1);
+			// }
 
-				printf("%u.%u.%u.%u\n", bytes[3], bytes[2], bytes[1], bytes[0]);
+			// if (res != NULL) {	
+			// 	u_int8_t *bytes = split_bytes((u_int32_t)((struct sockaddr_in *)res->ai_addr)->sin_addr.s_addr);
 
-				free(bytes);
+			// 	printf("%u.%u.%u.%u\n", bytes[3], bytes[2], bytes[1], bytes[0]);
 
-				struct addrinfo *addr = malloc(sizeof(struct addrinfo));
-				memcpy(addr, res, sizeof(struct addrinfo));
+			// 	free(bytes);
 
-				forbidden_addrs[addr_idx] = addr;
-				addr_idx ++;
-				if (addr_idx == NUM_FBDN_IPS) {
-					fprintf(stderr, "myproxy ~ load_forbidden_ips(): cannot load another ip from file, array full.\n");
-					return -1;
-				}
-			}
+			// 	struct addrinfo *addr = malloc(sizeof(struct addrinfo));
+			// 	memcpy(addr, res, sizeof(struct addrinfo));
 
-			free(hostname);
+			// 	forbidden_addrs[host_idx] = addr;
+			// 	host_idx ++;
+			// 	if (host_idx == NUM_FBDN_HOSTS) {
+			// 		fprintf(stderr, "myproxy ~ load_forbidden_ips(): cannot load another ip from file, array full.\n");
+			// 		return -1;
+			// 	}
+			// }
+
+			// free(hostname);
 
 			break;
 		}
@@ -904,7 +908,7 @@ int load_forbidden_ips(const char *forbidden_fp, struct addrinfo **forbidden_add
 	close(fd);
 
 	// printf("all forbidden ips loaded:\n");
-	// for (int i = 0; i < NUM_FBDN_IPS; i++) {
+	// for (int i = 0; i < NUM_FBDN_HOSTS; i++) {
 	// 	if (forbidden_ips[i] == NULL) break;
 	// 	printf("\t%s\n", forbidden_ips[i]);
 	// }

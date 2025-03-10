@@ -4,7 +4,7 @@
 #define OPTIONS "p:a:l:u"
 #define MAX_PROCESSES 50
 #define BUFFER_SIZE 4096
-#define NUM_FBDN_IPS 1000
+#define NUM_FBDN_HOSTS 1000
 
 #define HTTPS_PORT 443
 
@@ -21,8 +21,7 @@
 #define DOUBLE_EMPTY_LINE EMPTY_LINE EMPTY_LINE
 
 #define METHOD_REGEX	"([a-zA-Z]{3,8})"
-// #define URL_REGEX 		"(((http|https)://)?(([a-zA-Z0-9\\-_])+)((\\.[a-zA-Z0-9\\-_/]+)+))"
-#define URL_REGEX		"([a-zA-Z0-9\\-_/:?\\.]+)"
+#define URL_REGEX		"([a-zA-Z0-9_/:?\\.-]+)"
 #define VERSION_REGEX	"(HTTP/[0-9].[0-9])"
 #define REQLN_REGEX		METHOD_REGEX " " URL_REGEX " " VERSION_REGEX EMPTY_LINE
 
@@ -52,13 +51,13 @@ struct connection {
 void usage(char *exec);
 
 void sig_catcher(int sig);
-int handle_sigs(int *processes, const char *forbidden_fp, struct addrinfo **forbidden_addrs);
+int handle_sigs(int *processes, const char *forbidden_fp, char **forbidden_hosts);
 u_int32_t sig_queued(int sig);
 
-void handle_connection(struct connection *conn, struct addrinfo **forbidden_addrs);
+void handle_connection(struct connection *conn, char **forbidden_hosts);
 
-int parse_req_line(struct connection *conn, char *pkt_buf, int *port);
-int parse_header_fields(struct connection *conn, char *pkt_buf, struct addrinfo **forbidden_addrs, char **host_ipv4);
+int parse_req_line(struct connection *conn, char *pkt_buf);
+int parse_header_fields(struct connection *conn, char *pkt_buf, char **forbidden_hosts, char **host_ipv4, int *host_port);
 
 void connect_to_server(struct connection *conn, char *serv_ip, int port);
 bool verify_peer_cert(struct connection *conn);
@@ -70,10 +69,10 @@ int init_connection(struct connection *conn, int clientfd, struct sockaddr_in cl
 void free_connection(struct connection *conn);
 
 int resolve_host(char *hostname, struct addrinfo **res);
-int host_forbidden(struct addrinfo *host, struct addrinfo **forbidden_addrs);
+int host_forbidden(char *host, char **forbidden_hosts);
 
 void close_connection(struct connection *conn, int exit_code);
 
-int load_forbidden_ips(const char *forbidden_fp, struct addrinfo **forbidden_addrs);
+int load_forbidden_ips(const char *forbidden_fp, char **forbidden_hosts);
 
 #endif
